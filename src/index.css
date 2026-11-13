@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Smooth <= 200ms compositor-only surface transitions */
+.hud-panel {
+  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Kingdom-inspired dark iron & antique gold frame (zero backdrop-filter for low CPU) */
+.kingdom-frame {
+  background-color: rgba(20, 25, 35, 0.92);
+  border: 1px solid rgba(182, 139, 68, 0.55);
+  box-shadow: inset 0 1px 0 rgba(253, 230, 138, 0.12), 0 6px 20px rgba(8, 11, 18, 0.45);
+}
+
+/* Gentle storybook lantern sway on Title Screen (compositor-only) */
+@keyframes lanternSway {
+  0%, 100% {
+    transform: rotate(-3.5deg);
+  }
+  50% {
+    transform: rotate(3.5deg);
+  }
+}
+
+@keyframes lanternGlow {
+  0%, 100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.svg-lantern-sway {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: lanternSway 4.8s ease-in-out infinite;
+}
+
+.svg-lantern-sway-alt {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: lanternSway 5.4s ease-in-out infinite reverse;
+}
+
+.svg-lantern-glow {
+  animation: lanternGlow 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-panel,
+  .svg-lantern-sway,
+  .svg-lantern-sway-alt,
+  .svg-lantern-glow,
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

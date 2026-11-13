@@ -1,0 +1,495 @@
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import {
+  ISLAND_DEFS,
+  ISLAND_ORDER,
+  WORLD_HEIGHT,
+  WORLD_SCALE,
+  WORLD_WIDTH,
+  islandCoastWobble,
+} from './catalog';
+import type { IslandDef, SeasonType, SkyBridgeEntity, WeatherType, WorldLandmark } from './types';
+
+export function toWorldX(wx: number): number {
+  return (wx - WORLD_WIDTH * 0.5) * WORLD_SCALE;
+}
+
+export function toWorldZ(wy: number): number {
+  return (wy - WORLD_HEIGHT * 0.5) * WORLD_SCALE;
+}
+
+export function toSimX(x3: number): number {
+  return x3 / WORLD_SCALE + WORLD_WIDTH * 0.5;
+}
+
+export function toSimY(z3: number): number {
+  return z3 / WORLD_SCALE + WORLD_HEIGHT * 0.5;
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Computes normalized radial distance inside an island ellipse (0 = center, 1 = cliff rim).
+ */
+export function islandNormalizedDist(def: IslandDef, wx: number, wy: number): number {
+  const dx = (wx - def.centerX) / def.radiusX;
+  const dy = (wy - def.centerY) / def.radiusY;
+  const ang = Math.atan2(dy, dx);
+  const wobble = islandCoastWobble(def, ang);
+  return Math.hypot(dx, dy) / wobble;
+}
+
+/**
+ * Sculpted island plateau + stepped cliff height (excluding bridge spans).
+ */
+export function islandTerrainHeightAtSim(def: IslandDef, wx: number, wy: number, nd: number): number {
+  const lx = (wx - def.centerX) / def.radiusX; // -1..1
+  const ly = (wy - def.centerY) / def.radiusY; // -1..1
+  const gentleNoise =
+    Math.sin(wx * 0.014 + wy * 0.011) * 0.22 +
+    Math.cos(wx * 0.009 - wy * 0.015) * 0.18;
+  const rimDrop = smoothstep(0.87, 1.03, nd) * 0.42;
+
+  let relief = gentleNoise * (1 - nd * 0.55);
+
+  if (def.id === 'cradle') {
+    // Rising northern grassy bluff with crisp cliff step & gentle southern meadow
+    const bluffMask = smoothstep(-0.18, -0.34, ly) * smoothstep(0.72, 0.25, Math.abs(lx));
+    relief += bluffMask * 1.48;
+    const southKnob = smoothstep(0.45, 0.12, Math.hypot(lx - 0.34, ly - 0.36));
+    relief += southKnob * 0.65;
+  } else if (def.id === 'timbercrown') {
+    // Multi-tier highland pine escarpments + waterfall gorge
+    const tier1 = smoothstep(0.28, 0.08, ly + lx * 0.22) * 1.35;
+    const tier2 = smoothstep(-0.14, -0.32, ly - lx * 0.15) * 1.55;
+    const gorgeAng = def.waterfallAngle ?? 0.72;
+    const ang = Math.atan2(ly, lx);
+    const angDiff = Math.abs(Math.atan2(Math.sin(ang - gorgeAng), Math.cos(ang - gorgeAng)));
+    const gorgeCut = nd > 0.4 ? smoothstep(0.32, 0.06, angDiff) * 1.1 : 0;
+    relief += tier1 + tier2 - gorgeCut;
+  } else if (def.id === 'sunterrace') {
+    // Three distinct flat-topped agricultural terraces climbing NE
+    const slope = (lx * 0.42 - ly * 0.68);
+    const stepA = smoothstep(-0.22, -0.1, slope) * 0.92;
+    const stepB = smoothstep(0.18, 0.3, slope) * 0.92;
+    relief = gentleNoise * 0.28 + stepA + stepB;
+  } else if (def.id === 'coppercrag') {
+    // Twin jagged basalt caldera ridges surrounding an interior forge basin
+    const westSpire = smoothstep(0.48, 0.12, Math.hypot(lx + 0.38, ly + 0.18)) * 3.1;
+    const northRidge = smoothstep(0.42, 0.1, Math.hypot(lx - 0.28, ly + 0.32)) * 2.55;
+    const basin = smoothstep(0.38, 0.1, Math.hypot(lx, ly - 0.08)) * -0.85;
+    const cragJags = Math.abs(Math.sin(wx * 0.028) * Math.cos(wy * 0.026)) * 0.55;
+    relief += westSpire + northRidge + basin + cragJags;
+  } else if (def.id === 'mistatoll') {
+    // Crescent rocky sea-cliffs cupping a sunken turquoise lagoon opening west
+    const horseshoe = smoothstep(0.38, 0.68, nd) * smoothstep(-0.78, -0.25, lx) * 1.45;
+    const lagoonDip = smoothstep(0.42, 0.14, Math.hypot(lx + 0.14, ly)) * 0.58;
+    relief += horseshoe - lagoonDip;
+  }
+
+  let h = def.elevationY + relief - rimDrop;
+
+  if (def.hasSpring && def.springOffset) {
+    const sx = def.centerX + def.springOffset.dx;
+    const sy = def.centerY + def.springOffset.dy;
+    const sd = Math.hypot(wx - sx, wy - sy);
+    if (sd < 38) {
+      h -= (1 - smoothstep(14, 38, sd)) * 0.34;
+    }
+  }
+  return Math.max(0.14, h);
+}
+
+/**
+ * Exact 3D surface height at any sim coordinate (wx, wy), checking floating islands and built sky-bridges.
+ */
+export function groundHeightAtSim(
+  wx: number,
+  wy: number,
+  bridges?: SkyBridgeEntity[],
+): number {
+  if (bridges) {
+    for (const br of bridges) {
+      if (!br.built) continue;
+      const vx = br.x2 - br.x1;
+      const vy = br.y2 - br.y1;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 1) continue;
+      const t = ((wx - br.x1) * vx + (wy - br.y1) * vy) / len2;
+      if (t >= -0.05 && t <= 1.05) {
+        const ct = Math.max(0, Math.min(1, t));
+        const px = br.x1 + ct * vx;
+        const py = br.y1 + ct * vy;
+        if (Math.hypot(wx - px, wy - py) <= 22) {
+          const yA = groundHeightAtSim(br.x1, br.y1);
+          const yB = groundHeightAtSim(br.x2, br.y2);
+          const arch = Math.sin(ct * Math.PI) * (br.tier === 2 ? 1.8 : 0.9);
+          return yA + (yB - yA) * ct + arch + 0.14;
+        }
+      }
+    }
+  }
+
+  for (const id of ISLAND_ORDER) {
+    const def = ISLAND_DEFS[id];
+    const nd = islandNormalizedDist(def, wx, wy);
+    if (nd <= 1.03) {
+      return islandTerrainHeightAtSim(def, wx, wy, nd);
+    }
+  }
+
+  return 0.0; // Sky-sea water plane
+}
+
+/**
+ * Builds one faceted floating island mesh: terraced/cliffs biomed top + stratified craggy underside spire!
+ */
+export function buildFloatingIslandGeometry(
+  def: IslandDef,
+  season: SeasonType,
+  weather: WeatherType,
+): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const snow = weather === 'snow' || season === 'winter';
+  const autumn = season === 'autumn' && !snow;
+
+  const rx3 = def.radiusX * WORLD_SCALE;
+  const rz3 = def.radiusY * WORLD_SCALE;
+
+  let grassHex = 0x67a454;
+  let grassLitHex = 0x7cb862;
+  let rimRockHex = 0x7a7165;
+  let cliffFaceHex = 0x675f55;
+  let underRockHex = 0x524b44;
+  let sandHex = 0xd6c39b;
+
+  if (snow) {
+    grassHex = 0xd7e3ec;
+    grassLitHex = 0xedf4f9;
+    rimRockHex = 0x6e7b86;
+    cliffFaceHex = 0x5c6874;
+    underRockHex = 0x48535e;
+    sandHex = 0xcfdce5;
+  } else if (def.biome === 'pine') {
+    grassHex = autumn ? 0x8d8849 : 0x4b7e48;
+    grassLitHex = autumn ? 0xb4964c : 0x5f9656;
+    rimRockHex = 0x6e685e;
+    cliffFaceHex = 0x5b554d;
+  } else if (def.biome === 'terrace') {
+    grassHex = autumn ? 0xb39a48 : 0x75ad52;
+    grassLitHex = autumn ? 0xd2ad4d : 0x8ec466;
+    cliffFaceHex = 0x857058;
+  } else if (def.biome === 'crag') {
+    grassHex = 0x767469;
+    grassLitHex = 0x8f887a;
+    rimRockHex = 0x645b52;
+    cliffFaceHex = 0x4e4640;
+    underRockHex = 0x3d3632;
+  } else if (def.biome === 'mist_atoll') {
+    grassHex = 0x598e6b;
+    grassLitHex = 0x6ea67c;
+    rimRockHex = 0x687278;
+    cliffFaceHex = 0x586268;
+  } else if (autumn) {
+    grassHex = 0xa79c4b;
+    grassLitHex = 0xc99c4a;
+  }
+
+  const cGrass = new THREE.Color(grassHex);
+  const cGrassLit = new THREE.Color(grassLitHex);
+  const cRim = new THREE.Color(rimRockHex);
+  const cCliff = new THREE.Color(cliffFaceHex);
+  const cUnder = new THREE.Color(underRockHex);
+  const cSand = new THREE.Color(sandHex);
+  const tmpCol = new THREE.Color();
+
+  // 1. Sculpted Top Cap Grid (higher resolution for crisp terraces & cliff risers)
+  const rings = 18;
+  const segs = 44;
+  const topPos: number[] = [];
+  const topCol: number[] = [];
+  const topIdx: number[] = [];
+
+  const cx = toWorldX(def.centerX);
+  const cz = toWorldZ(def.centerY);
+
+  const sampleTopColor = (wx: number, wy: number, h: number, rIndex: number) => {
+    const eps = 16;
+    const nd = islandNormalizedDist(def, wx, wy);
+    const hx = groundHeightAtSim(wx + eps, wy);
+    const hz = groundHeightAtSim(wx, wy + eps);
+    const slope = Math.hypot((hx - h) / (eps * WORLD_SCALE), (hz - h) / (eps * WORLD_SCALE));
+
+    if (rIndex >= rings - 1) {
+      tmpCol.copy(cRim);
+    } else if (slope > 0.34) {
+      // Exposed cliff strata or terrace riser wall!
+      tmpCol.copy(cCliff).lerp(cRim, 0.35);
+    } else if (def.id === 'mist_atoll' as never || (def.biome === 'mist_atoll' && h < 0.42)) {
+      tmpCol.copy(cSand);
+    } else {
+      const mix = Math.sin(wx * 0.02 + wy * 0.015) * 0.5 + 0.5;
+      tmpCol.copy(cGrass).lerp(cGrassLit, mix * 0.65 + (1 - nd) * 0.2);
+      if (def.biome === 'crag' && h > def.elevationY + 2.1) {
+        tmpCol.lerp(cCliff, 0.55);
+      }
+    }
+  };
+
+  const centerH = groundHeightAtSim(def.centerX, def.centerY);
+  topPos.push(cx, centerH, cz);
+  sampleTopColor(def.centerX, def.centerY, centerH, 0);
+  topCol.push(tmpCol.r, tmpCol.g, tmpCol.b);
+
+  for (let r = 1; r <= rings; r++) {
+    const f = r / rings;
+    for (let s = 0; s < segs; s++) {
+      const ang = (s / segs) * Math.PI * 2;
+      const wobble = islandCoastWobble(def, ang);
+      const x3 = cx + Math.cos(ang) * rx3 * f * wobble;
+      const z3 = cz + Math.sin(ang) * rz3 * f * wobble;
+      const sx = toSimX(x3);
+      const sy = toSimY(z3);
+      const y3 = r === rings ? def.elevationY - 0.38 : groundHeightAtSim(sx, sy);
+      topPos.push(x3, y3, z3);
+
+      sampleTopColor(sx, sy, y3, r);
+      topCol.push(tmpCol.r, tmpCol.g, tmpCol.b);
+    }
+  }
+
+  for (let s = 0; s < segs; s++) {
+    const next = (s + 1) % segs;
+    topIdx.push(0, 1 + next, 1 + s);
+  }
+  for (let r = 1; r < rings; r++) {
+    const row0 = 1 + (r - 1) * segs;
+    const row1 = 1 + r * segs;
+    for (let s = 0; s < segs; s++) {
+      const next = (s + 1) % segs;
+      const a = row0 + s;
+      const b = row0 + next;
+      const c = row1 + s;
+      const d = row1 + next;
+      topIdx.push(a, b, c, b, d, c);
+    }
+  }
+
+  const topGeo = new THREE.BufferGeometry();
+  topGeo.setAttribute('position', new THREE.Float32BufferAttribute(topPos, 3));
+  topGeo.setAttribute('color', new THREE.Float32BufferAttribute(topCol, 3));
+  topGeo.setIndex(topIdx);
+  const topNonIdx = topGeo.toNonIndexed();
+  topGeo.dispose();
+  topNonIdx.computeVertexNormals();
+  parts.push(topNonIdx);
+
+  // 2. Stratified Floating Cliff Skirt & Craggy Underside Spire
+  const underPos: number[] = [];
+  const underCol: number[] = [];
+  const underIdx: number[] = [];
+
+  const cliffDepth = def.elevationY > 3 ? 9.4 : 5.4;
+  const skirtRings: [number, number, THREE.Color][] = [
+    [1.0, def.elevationY - 0.38, cRim],
+    [0.93, def.elevationY - 1.9, cCliff],
+    [0.66, def.elevationY - cliffDepth * 0.62, cUnder],
+    [0.26, def.elevationY - cliffDepth, cUnder],
+  ];
+
+  for (let r = 0; r < skirtRings.length; r++) {
+    const [radScale, yBase, col] = skirtRings[r];
+    for (let s = 0; s < segs; s++) {
+      const ang = (s / segs) * Math.PI * 2;
+      const wobble = islandCoastWobble(def, ang);
+      const cragJitter = r > 0 ? Math.sin(s * 2.9 + r * 2.1) * 0.095 : 0;
+      const x3 = cx + Math.cos(ang) * rx3 * (radScale + cragJitter) * wobble;
+      const z3 = cz + Math.sin(ang) * rz3 * (radScale + cragJitter) * wobble;
+      const y3 = yBase + (r > 0 ? Math.cos(s * 3.3 + r) * 0.42 : 0);
+      underPos.push(x3, y3, z3);
+      underCol.push(col.r, col.g, col.b);
+    }
+  }
+  const tipIdx = underPos.length / 3;
+  underPos.push(cx, def.elevationY - cliffDepth - 1.8, cz);
+  underCol.push(cUnder.r * 0.8, cUnder.g * 0.8, cUnder.b * 0.8);
+
+  for (let r = 0; r < skirtRings.length - 1; r++) {
+    const r0 = r * segs;
+    const r1 = (r + 1) * segs;
+    for (let s = 0; s < segs; s++) {
+      const next = (s + 1) % segs;
+      underIdx.push(r0 + s, r0 + next, r1 + s, r0 + next, r1 + next, r1 + s);
+    }
+  }
+  const lastRing = (skirtRings.length - 1) * segs;
+  for (let s = 0; s < segs; s++) {
+    const next = (s + 1) % segs;
+    underIdx.push(lastRing + s, lastRing + next, tipIdx);
+  }
+
+  const underGeo = new THREE.BufferGeometry();
+  underGeo.setAttribute('position', new THREE.Float32BufferAttribute(underPos, 3));
+  underGeo.setAttribute('color', new THREE.Float32BufferAttribute(underCol, 3));
+  underGeo.setIndex(underIdx);
+  const underNonIdx = underGeo.toNonIndexed();
+  underGeo.dispose();
+  underNonIdx.computeVertexNormals();
+  parts.push(underNonIdx);
+
+  const merged = mergeGeometries(parts, false);
+  parts.forEach((p) => p.dispose());
+  return merged ?? new THREE.BufferGeometry();
+}
+
+export function buildSkySeaGeometry(): THREE.BufferGeometry {
+  const geom = new THREE.PlaneGeometry(820, 620, 76, 58);
+  geom.rotateX(-Math.PI / 2);
+  return geom;
+}
+
+export function buildWaterfallGeometry(def: IslandDef): THREE.BufferGeometry {
+  const ang = def.waterfallAngle ?? 1.2;
+  const wobble = islandCoastWobble(def, ang);
+  const rx3 = def.radiusX * WORLD_SCALE * 0.94 * wobble;
+  const rz3 = def.radiusY * WORLD_SCALE * 0.94 * wobble;
+  const topX = toWorldX(def.centerX) + Math.cos(ang) * rx3;
+  const topZ = toWorldZ(def.centerY) + Math.sin(ang) * rz3;
+  const topY = def.elevationY - 0.18;
+  const botX = topX + Math.cos(ang) * 1.65;
+  const botZ = topZ + Math.sin(ang) * 1.65;
+
+  const ribbon = new THREE.PlaneGeometry(1.75, topY + 0.35, 2, 8);
+  const pos = ribbon.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const lx = pos.getX(i);
+    const ly = pos.getY(i);
+    const t = 1 - (ly + (topY + 0.35) * 0.5) / (topY + 0.35);
+    const px = topX + (botX - topX) * t + Math.sin(ang + Math.PI / 2) * lx;
+    const pz = topZ + (botZ - topZ) * t - Math.cos(ang + Math.PI / 2) * lx;
+    const py = topY * (1 - t);
+    pos.setXYZ(i, px, py, pz);
+  }
+  ribbon.computeVertexNormals();
+  return ribbon;
+}
+
+export interface ScatterPoint {
+  islandId: string;
+  x3: number;
+  y3: number;
+  z3: number;
+  scale: number;
+  rotY: number;
+  colorIndex: number;
+}
+
+export function buildArchipelagoFoliageScatter(): {
+  grassTufts: ScatterPoint[];
+  wildflowers: ScatterPoint[];
+  ferns: ScatterPoint[];
+} {
+  const grassTufts: ScatterPoint[] = [];
+  const wildflowers: ScatterPoint[] = [];
+  const ferns: ScatterPoint[] = [];
+
+  for (const id of ISLAND_ORDER) {
+    const def = ISLAND_DEFS[id];
+    const samples = def.biome === 'crag' ? 300 : 660;
+    for (let i = 0; i < samples; i++) {
+      const ang = (i * 2.39996) % (Math.PI * 2);
+      const r = Math.sqrt((i + 0.5) / samples) * 0.87;
+      const wx = def.centerX + Math.cos(ang) * def.radiusX * r;
+      const wy = def.centerY + Math.sin(ang) * def.radiusY * r;
+      const y3 = groundHeightAtSim(wx, wy);
+      // Skip underwater sunken lagoon on Mist Atoll
+      if (def.biome === 'mist_atoll' && y3 < 0.45) continue;
+
+      const pt: ScatterPoint = {
+        islandId: id,
+        x3: toWorldX(wx),
+        y3,
+        z3: toWorldZ(wy),
+        scale: 0.72 + ((i * 13) % 7) * 0.06,
+        rotY: (i * 1.73) % (Math.PI * 2),
+        colorIndex: i % 5,
+      };
+      if (i % 6 === 0 && def.biome !== 'crag') wildflowers.push(pt);
+      else if (i % 7 === 0 && (def.biome === 'pine' || def.biome === 'mist_atoll')) ferns.push(pt);
+      else grassTufts.push(pt);
+    }
+  }
+
+  return { grassTufts, wildflowers, ferns };
+}
+
+export function buildArchipelagoLandmarks(): WorldLandmark[] {
+  const list: WorldLandmark[] = [];
+  let idx = 0;
+
+  const add = (
+    islandId: WorldLandmark['islandId'],
+    kind: WorldLandmark['kind'],
+    x: number,
+    y: number,
+    scale = 1,
+    rotY = 0,
+  ) => {
+    list.push({ id: `lm_${idx++}`, islandId, kind, x, y, scale, rotY });
+  };
+
+  // Cradle: cliff boulders & moss monolith overlooking sky-sea
+  const cr = ISLAND_DEFS.cradle;
+  add('cradle', 'cliff_boulder', cr.centerX - 420, cr.centerY - 310, 1.35, 0.4);
+  add('cradle', 'cliff_boulder', cr.centerX + 380, cr.centerY - 330, 1.2, 1.2);
+  add('cradle', 'monolith', cr.centerX - 310, cr.centerY - 220, 1.15, 0.25);
+  add('cradle', 'reed_clump', cr.centerX + cr.springOffset!.dx + 38, cr.centerY + cr.springOffset!.dy + 16, 1.0, 0.7);
+  add('cradle', 'driftwood', cr.centerX + 590, cr.centerY + 190, 1.0, 2.1);
+
+  // Timbercrown: granite crag boulders & ancient woodland monolith
+  const tc = ISLAND_DEFS.timbercrown;
+  add('timbercrown', 'cliff_boulder', tc.centerX - 340, tc.centerY - 260, 1.5, 0.8);
+  add('timbercrown', 'cliff_boulder', tc.centerX + 360, tc.centerY - 220, 1.3, 1.8);
+  add('timbercrown', 'monolith', tc.centerX - 60, tc.centerY - 280, 1.25, 0.5);
+  add('timbercrown', 'reed_clump', tc.centerX + tc.springOffset!.dx - 32, tc.centerY + tc.springOffset!.dy + 20, 1.0, 1.4);
+
+  // Sun-Terrace: ancient terraced stone ruins & wild olive/loam cairns
+  const st = ISLAND_DEFS.sunterrace;
+  add('sunterrace', 'ruin_cairn', st.centerX - 180, st.centerY - 120, 1.2, 0.3);
+  add('sunterrace', 'ruin_cairn', st.centerX + 210, st.centerY + 95, 1.05, 1.4);
+  add('sunterrace', 'cliff_boulder', st.centerX + 490, st.centerY - 290, 1.3, 0.9);
+  add('sunterrace', 'reed_clump', st.centerX + st.springOffset!.dx + 36, st.centerY + st.springOffset!.dy - 12, 1.0, 2.2);
+
+  // Copper-Crag: sharp basalt boulders & standing forge monoliths
+  const cc = ISLAND_DEFS.coppercrag;
+  add('coppercrag', 'cliff_boulder', cc.centerX - 390, cc.centerY - 160, 1.65, 1.1);
+  add('coppercrag', 'cliff_boulder', cc.centerX + 340, cc.centerY - 210, 1.5, 2.4);
+  add('coppercrag', 'monolith', cc.centerX - 240, cc.centerY + 210, 1.35, 0.15);
+
+  // Mist Atoll: coastal driftwood, lagoon reeds & sea rocks
+  const ma = ISLAND_DEFS.mistatoll;
+  add('mistatoll', 'driftwood', ma.centerX - 320, ma.centerY + 210, 1.1, 0.8);
+  add('mistatoll', 'reed_clump', ma.centerX - 95, ma.centerY + 115, 1.15, 0.3);
+  add('mistatoll', 'reed_clump', ma.centerX + 185, ma.centerY - 60, 1.05, 1.7);
+  add('mistatoll', 'cliff_boulder', ma.centerX + 420, ma.centerY + 120, 1.4, 2.0);
+
+  // Floating Sky-Sea Rock Islets scattered between islands
+  const seaIslets: [number, number, number][] = [
+    [1380, 2240, 1.15],
+    [2580, 1780, 0.95],
+    [3250, 2950, 1.2],
+    [4520, 2060, 1.05],
+    [2440, 880, 1.3],
+    [4620, 1040, 1.1],
+    [1640, 3440, 1.25],
+    [5460, 2760, 1.0],
+  ];
+  seaIslets.forEach(([sx, sy, sc], i) => {
+    add('sea', 'sky_islet', sx, sy, sc, (i * 1.1) % (Math.PI * 2));
+  });
+
+  return list;
+}

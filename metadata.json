@@ -1,0 +1,6 @@
+{
+  "name": "Hearthglen",
+  "description": "A cozy, low-CPU desktop wallpaper village progression game with dynamic weather, human-like villagers, traits, families, and gentle God-simulator guidance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
