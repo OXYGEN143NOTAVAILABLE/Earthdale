@@ -9,6 +9,7 @@ import type {
   LifeStage,
   SeasonType,
   SkyBridgeEntity,
+  SkyCablewayEntity,
   TaskType,
   TimePreset,
   TraitDefinition,
@@ -19,10 +20,10 @@ import type {
   WeatherType,
 } from './types';
 
-export const WORLD_WIDTH = 6400;
-export const WORLD_HEIGHT = 4400;
-export const WORLD_SCALE = 0.085; // 6400x4400 -> 544x374 3D world units
-export const CURRENT_WORLD_VERSION = 6;
+export const WORLD_WIDTH = 7600;
+export const WORLD_HEIGHT = 5200;
+export const WORLD_SCALE = 0.085; // 7600x5200 -> 646x442 3D world units
+export const CURRENT_WORLD_VERSION = 7;
 
 export function islandCoastWobble(def: IslandDef, angleRad: number): number {
   return (
@@ -44,98 +45,202 @@ export function getIslandRimPoint(
   };
 }
 
+function createDockSpot(def: Omit<IslandDef, 'dockSpot'>, angleRad: number): IslandDef['dockSpot'] {
+  const wobble =
+    1 +
+    Math.sin(angleRad * 5 + def.centerX * 0.01) * 0.06 +
+    Math.cos(angleRad * 3 - def.centerY * 0.01) * 0.04;
+  const rx = def.radiusX * wobble;
+  const ry = def.radiusY * wobble;
+  return {
+    x: Math.round(def.centerX + Math.cos(angleRad) * rx * 0.95),
+    y: Math.round(def.centerY + Math.sin(angleRad) * ry * 0.95),
+    seaX: Math.round(def.centerX + Math.cos(angleRad) * (rx + 170)),
+    seaY: Math.round(def.centerY + Math.sin(angleRad) * (ry + 170)),
+  };
+}
+
+function makeIsland(
+  spec: Omit<IslandDef, 'dockSpot'>,
+  dockAngleRad: number,
+): IslandDef {
+  return {
+    ...spec,
+    dockSpot: createDockSpot(spec, dockAngleRad),
+  };
+}
+
 export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
-  cradle: {
-    id: 'cradle',
-    name: 'Cradle Isle',
-    subtitle: 'Sunlit meadow basin with mossy spring, wild berries, flint & rising northern bluff.',
-    biome: 'meadow',
-    centerX: 2260,
-    centerY: 2560,
-    radiusX: 780,
-    radiusY: 530,
-    elevationY: 0.7,
-    defaultCultureId: 'hearthfolk',
-    hasSpring: true,
-    springOffset: { dx: -245, dy: -145 },
-    hasWaterfall: false,
-    dockSpot: { x: 2995, y: 2560, seaX: 3150, seaY: 2560 },
-    oreRichness: 'stone',
-    soilQuality: 0.95,
-  },
-  timbercrown: {
-    id: 'timbercrown',
-    name: 'Timbercrown Ridge',
-    subtitle: 'Highland stepped cedar plateau & granite escarpment home to the Cedarwood Sylvans.',
-    biome: 'pine',
-    centerX: 1260,
-    centerY: 1180,
-    radiusX: 730,
-    radiusY: 500,
-    elevationY: 5.6,
-    defaultCultureId: 'sylvan',
-    hasSpring: true,
-    springOffset: { dx: 185, dy: 125 },
-    hasWaterfall: true,
-    waterfallAngle: 0.72,
-    dockSpot: { x: 595, y: 1365, seaX: 430, seaY: 1425 },
-    oreRichness: 'stone',
-    soilQuality: 0.85,
-  },
-  sunterrace: {
-    id: 'sunterrace',
-    name: 'Sun-Terrace Isle',
-    subtitle: 'Three stepped golden loam terraces with ancient ruins built for crops & orchards.',
-    biome: 'terrace',
-    centerX: 4240,
-    centerY: 3040,
-    radiusX: 810,
-    radiusY: 545,
-    elevationY: 0.9,
-    defaultCultureId: 'hearthfolk',
-    hasSpring: true,
-    springOffset: { dx: -185, dy: 145 },
-    hasWaterfall: false,
-    dockSpot: { x: 4950, y: 2790, seaX: 5120, seaY: 2720 },
-    oreRichness: 'none',
-    soilQuality: 1.25,
-  },
-  coppercrag: {
-    id: 'coppercrag',
-    name: 'Copper-Crag Spire',
-    subtitle: 'Towering basalt caldera & mineral crags settled by the Cragforge Smiths.',
-    biome: 'crag',
-    centerX: 3560,
-    centerY: 1080,
-    radiusX: 690,
-    radiusY: 470,
-    elevationY: 6.6,
-    defaultCultureId: 'cragforge',
-    hasSpring: false,
-    hasWaterfall: true,
-    waterfallAngle: 1.56,
-    dockSpot: { x: 3560, y: 1515, seaX: 3560, seaY: 1690 },
-    oreRichness: 'rich_metals',
-    soilQuality: 0.55,
-  },
-  mistatoll: {
-    id: 'mistatoll',
-    name: 'Outer Mist Atoll',
-    subtitle: 'Crescent sea-cliff lagoon & mist harbor guarded by the Mist Mariners.',
-    biome: 'mist_atoll',
-    centerX: 5340,
-    centerY: 1700,
-    radiusX: 660,
-    radiusY: 475,
-    elevationY: 0.65,
-    defaultCultureId: 'mist_mariner',
-    hasSpring: true,
-    springOffset: { dx: 150, dy: -110 },
-    hasWaterfall: false,
-    dockSpot: { x: 4725, y: 1700, seaX: 4545, seaY: 1700 },
-    oreRichness: 'stone',
-    soilQuality: 0.8,
-  },
+  cradle: makeIsland(
+    {
+      id: 'cradle',
+      name: 'Cradle Isle',
+      subtitle: 'Sunlit meadow basin with mossy spring, wild berries, flint & rising northern bluff.',
+      biome: 'meadow',
+      roleTag: 'homeland',
+      centerX: 2950,
+      centerY: 2780,
+      radiusX: 780,
+      radiusY: 530,
+      elevationY: 0.75,
+      defaultCultureId: 'hearthfolk',
+      hasSpring: true,
+      springOffset: { dx: -245, dy: -145 },
+      hasWaterfall: false,
+      oreRichness: 'stone',
+      soilQuality: 0.95,
+    },
+    0.18,
+  ),
+  timbercrown: makeIsland(
+    {
+      id: 'timbercrown',
+      name: 'Timbercrown Ridge',
+      subtitle: 'Highland stepped cedar plateau & granite escarpment home to the Cedarwood Sylvans.',
+      biome: 'pine',
+      roleTag: 'timber',
+      centerX: 1420,
+      centerY: 1820,
+      radiusX: 720,
+      radiusY: 490,
+      elevationY: 5.6,
+      defaultCultureId: 'sylvan',
+      hasSpring: true,
+      springOffset: { dx: 185, dy: 125 },
+      hasWaterfall: true,
+      waterfallAngle: 0.72,
+      oreRichness: 'stone',
+      soilQuality: 0.85,
+    },
+    2.82,
+  ),
+  sunterrace: makeIsland(
+    {
+      id: 'sunterrace',
+      name: 'Sun-Terrace Isle',
+      subtitle: 'Three stepped golden loam terraces built for lush crops, pastures & apple orchards.',
+      biome: 'terrace',
+      roleTag: 'harvest',
+      centerX: 4560,
+      centerY: 3600,
+      radiusX: 800,
+      radiusY: 540,
+      elevationY: 1.0,
+      defaultCultureId: 'hearthfolk',
+      hasSpring: true,
+      springOffset: { dx: -185, dy: 145 },
+      hasWaterfall: false,
+      oreRichness: 'none',
+      soilQuality: 1.25,
+    },
+    -0.42,
+  ),
+  coppercrag: makeIsland(
+    {
+      id: 'coppercrag',
+      name: 'Copper-Crag Spire',
+      subtitle: 'Towering basalt caldera & mineral crags settled by the Cragforge Smiths.',
+      biome: 'crag',
+      roleTag: 'forge',
+      centerX: 4180,
+      centerY: 1340,
+      radiusX: 690,
+      radiusY: 470,
+      elevationY: 6.6,
+      defaultCultureId: 'cragforge',
+      hasSpring: false,
+      hasWaterfall: true,
+      waterfallAngle: 1.56,
+      oreRichness: 'rich_metals',
+      soilQuality: 0.55,
+    },
+    1.57,
+  ),
+  mistatoll: makeIsland(
+    {
+      id: 'mistatoll',
+      name: 'Outer Mist Atoll',
+      subtitle: 'Crescent sea-cliff lagoon & mist harbor guarded by the Mist Mariners.',
+      biome: 'mist_atoll',
+      roleTag: 'harbor',
+      centerX: 5960,
+      centerY: 2660,
+      radiusX: 660,
+      radiusY: 475,
+      elevationY: 0.65,
+      defaultCultureId: 'mist_mariner',
+      hasSpring: true,
+      springOffset: { dx: 150, dy: -110 },
+      hasWaterfall: false,
+      oreRichness: 'stone',
+      soilQuality: 0.8,
+    },
+    3.1,
+  ),
+  starbloom: makeIsland(
+    {
+      id: 'starbloom',
+      name: 'Starbloom Ruins',
+      subtitle: 'Jade-meadow exploration sanctuary dotted with ancient starlight obelisks, orchards & healing springs.',
+      biome: 'ruins',
+      roleTag: 'exploration',
+      centerX: 1460,
+      centerY: 3960,
+      radiusX: 700,
+      radiusY: 490,
+      elevationY: 1.85,
+      defaultCultureId: 'hearthfolk',
+      hasSpring: true,
+      springOffset: { dx: -140, dy: 90 },
+      hasWaterfall: true,
+      waterfallAngle: 2.35,
+      oreRichness: 'stone',
+      soilQuality: 1.15,
+    },
+    0.1,
+  ),
+  embervault: makeIsland(
+    {
+      id: 'embervault',
+      name: 'Ashen Bastion',
+      subtitle: 'Scorched volcanic fortress holding rich iron vaults—guarded by the hostile Ashen Bastion raiders.',
+      biome: 'volcanic',
+      roleTag: 'battle',
+      centerX: 6140,
+      centerY: 1080,
+      radiusX: 720,
+      radiusY: 500,
+      elevationY: 4.4,
+      defaultCultureId: 'ashen_raider',
+      hasSpring: false,
+      hasWaterfall: false,
+      oreRichness: 'rich_metals',
+      soilQuality: 0.45,
+    },
+    1.75,
+  ),
+  frostpeak: makeIsland(
+    {
+      id: 'frostpeak',
+      name: 'Frostpeak Glacier',
+      subtitle: 'High alpine spire of snow-laden cedars, deep iron veins, and a frozen Star-Shrine.',
+      biome: 'frost',
+      roleTag: 'alpine',
+      centerX: 2320,
+      centerY: 860,
+      radiusX: 640,
+      radiusY: 440,
+      elevationY: 8.4,
+      defaultCultureId: 'cragforge',
+      hasSpring: true,
+      springOffset: { dx: 120, dy: 80 },
+      hasWaterfall: true,
+      waterfallAngle: 1.95,
+      oreRichness: 'rich_metals',
+      soilQuality: 0.4,
+    },
+    1.22,
+  ),
 };
 
 export const ISLAND_ORDER: IslandId[] = [
@@ -144,6 +249,9 @@ export const ISLAND_ORDER: IslandId[] = [
   'sunterrace',
   'coppercrag',
   'mistatoll',
+  'starbloom',
+  'embervault',
+  'frostpeak',
 ];
 
 function createBridgeSpec(
@@ -179,6 +287,42 @@ function createBridgeSpec(
   };
 }
 
+function createCablewaySpec(
+  id: string,
+  name: string,
+  fromIsland: IslandId,
+  toIsland: IslandId,
+  requiredTechId: string,
+  costTimber: number,
+  costStone: number,
+  costIron: number,
+): SkyCablewayEntity {
+  const fromDef = ISLAND_DEFS[fromIsland];
+  const toDef = ISLAND_DEFS[toIsland];
+  const ang = Math.atan2(toDef.centerY - fromDef.centerY, toDef.centerX - fromDef.centerX);
+  const p1 = getIslandRimPoint(fromDef, ang, 0.9);
+  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.9);
+  return {
+    id,
+    name,
+    fromIsland,
+    toIsland,
+    x1: p1.x,
+    y1: p1.y,
+    x2: p2.x,
+    y2: p2.y,
+    built: false,
+    progress: 0,
+    requiredTechId,
+    costTimber,
+    costStone,
+    costIron,
+    gondolaT: 0.15,
+    gondolaDir: 1,
+    passengerIds: [],
+  };
+}
+
 export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
   createBridgeSpec(
     'bridge_cradle_sun',
@@ -197,7 +341,17 @@ export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
     'timbercrown',
     1,
     'rope_bridges',
-    34,
+    32,
+    14,
+  ),
+  createBridgeSpec(
+    'bridge_cradle_starbloom',
+    'Starbloom Pilgrim Span',
+    'cradle',
+    'starbloom',
+    1,
+    'rope_bridges',
+    28,
     14,
   ),
   createBridgeSpec(
@@ -229,6 +383,59 @@ export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
     'sail_navigation',
     42,
     26,
+  ),
+  createBridgeSpec(
+    'bridge_crag_ember',
+    'Ashen Siege Causeway',
+    'coppercrag',
+    'embervault',
+    2,
+    'sky_causeways',
+    52,
+    46,
+  ),
+];
+
+export const INITIAL_SKY_CABLEWAYS: SkyCablewayEntity[] = [
+  createCablewaySpec(
+    'cable_timber_frost',
+    'Frostpeak Glacier Gondola',
+    'timbercrown',
+    'frostpeak',
+    'cliff_cableways',
+    34,
+    26,
+    4,
+  ),
+  createCablewaySpec(
+    'cable_crag_frost',
+    'High-Iron Alpine Line',
+    'coppercrag',
+    'frostpeak',
+    'cliff_cableways',
+    38,
+    30,
+    6,
+  ),
+  createCablewaySpec(
+    'cable_starbloom_timber',
+    'Cedar-Starlight Aerial Line',
+    'starbloom',
+    'timbercrown',
+    'cliff_cableways',
+    30,
+    20,
+    2,
+  ),
+  createCablewaySpec(
+    'cable_mist_ember',
+    'Bastion Cliff Zipline',
+    'mistatoll',
+    'embervault',
+    'cliff_cableways',
+    36,
+    28,
+    8,
   ),
 ];
 
@@ -281,8 +488,8 @@ export const TRAVELER_ATTITUDE_META: Record<
 export const ERA_LABELS: Record<VillageEra, { name: string; subtitle: string }> = {
   1: { name: 'Era I · Bare Awakening', subtitle: 'Wild berries, flint sparks, and the first shared bonfire.' },
   2: { name: 'Era II · Hearth & Pasture', subtitle: 'Timber cottages, cultivated crops, livestock, and sky-bridges.' },
-  3: { name: 'Era III · Maritime Clans', subtitle: 'Cargo sails, libraries, bronze smithing, and outer-island diplomacy.' },
-  4: { name: 'Era IV · Iron Archipelago', subtitle: 'High-arch causeways, orchards, war galleys, and enduring realms.' },
+  3: { name: 'Era III · Maritime Clans', subtitle: 'Wind-gliders, cableways, cargo sails, and outer-island ruins.' },
+  4: { name: 'Era IV · Iron Archipelago', subtitle: 'High-arch causeways, orchards, war galleys, and siege realms.' },
 };
 
 export const SEASON_META: Record<
@@ -331,7 +538,7 @@ export const TRAITS: Record<string, TraitDefinition> = {
     id: 'curious_scout',
     name: 'Horizon-Curious',
     polarity: 'positive',
-    summary: 'Volunteers to cross bridges, sail boats & uncover misty islands.',
+    summary: 'Volunteers to cross bridges, glide cliffs, sail boats & uncover ruins.',
     workSpeedMult: 1.06,
     moodDrift: 0.2,
     energyDrainMult: 0.94,
@@ -352,7 +559,7 @@ export const TRAITS: Record<string, TraitDefinition> = {
     id: 'brave_hunter',
     name: 'Stout-Hearted',
     polarity: 'positive',
-    summary: 'Fearless against wild boars & coastal raiders.',
+    summary: 'Fearless against wild boars & Ashen Bastion raiders.',
     workSpeedMult: 1.12,
     moodDrift: 0.15,
     energyDrainMult: 0.92,
@@ -484,7 +691,7 @@ export const TASKS: TaskMeta[] = [
   { id: 'study', key: '9', label: 'Study', verb: 'Writing cultural lore', requiredTechId: 'scholarship' },
   { id: 'smelt', key: '0', label: 'Smelt', verb: 'Forging bronze & iron', requiredTechId: 'bronze_smelting' },
   { id: 'guard', key: 'G', label: 'Guard', verb: 'Patrolling watchtowers', requiredTechId: 'archery_watch' },
-  { id: 'explore', key: 'E', label: 'Explore', verb: 'Scouting unknown horizons', requiredTechId: 'rope_bridges' },
+  { id: 'explore', key: 'E', label: 'Explore', verb: 'Scouting ruins & horizons', requiredTechId: 'rope_bridges' },
 ];
 
 export const TASK_BY_ID: Record<TaskType, TaskMeta> = Object.fromEntries(
@@ -495,8 +702,8 @@ export const CHIEF_FOCUSES: { id: ChiefFocus; label: string; summary: string }[]
   { id: 'balanced', label: 'Balanced Rhythm', summary: 'Organic mix of foraging, building, study & care.' },
   { id: 'harvest', label: 'Food & Pastures', summary: 'Prioritizes crops, hunting, fishing & wool.' },
   { id: 'craft', label: 'Craft & Metallurgy', summary: 'Prioritizes timber, stone, libraries & smithing.' },
-  { id: 'explore', label: 'Explore & Sail', summary: 'Sends curious scouts across bridges & ships.' },
-  { id: 'defense', label: 'Watch & Garrison', summary: 'Prioritizes weapons, armor, towers & patrols.' },
+  { id: 'explore', label: 'Explore & Sail', summary: 'Sends curious scouts across bridges, gliders, cableways & ships.' },
+  { id: 'defense', label: 'Watch & Garrison', summary: 'Prioritizes weapons, armor, towers & bastion expeditions.' },
 ];
 
 export const WEATHER_LABELS: Record<WeatherType, string> = {
@@ -706,17 +913,17 @@ export const COGNITIVE_STAGE_META: Record<
   experimenting: {
     label: 'Experimenting',
     color: '#8CE0AC',
-    summary: 'Work tasks unlocked! Striking flint sparks, stacking branches & testing shelters and tools.',
+    summary: 'Work tasks unlocked! Autonomous building, flint sparks, tools & island craft begin.',
   },
   reasoning: {
     label: 'Reasoning',
     color: '#E5AF47',
-    summary: 'Capable of intentional farming, craftsmanship, navigation & teaching others.',
+    summary: 'Capable of autonomous expansion, sailing, gliding, cableways & village planning.',
   },
   enlightened: {
     label: 'Enlightened',
     color: '#C4B5FD',
-    summary: 'Deep archipelago thinker—accelerates discoveries and inspires nearby minds.',
+    summary: 'Deep archipelago thinker—accelerates discoveries, upgrades realms & inspires nearby minds.',
   },
 };
 
@@ -729,5 +936,9 @@ export const CONCEPT_LABELS: Record<string, string> = {
   wildlife: 'Wild Fauna',
   horizon: 'Sky-Sea Rim',
   embers: 'Hearth Fire',
-  copper_vein: 'Ore Veins',
+  copper_vein: 'Copper Veins',
+  iron_vein: 'Iron Ore Veins',
+  ruin: 'Ancient Ruin',
+  glacier: 'Alpine Snow',
+  volcano: 'Volcanic Caldera',
 };

@@ -6,8 +6,10 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ISLAND_DEFS, ISLAND_ORDER, WORLD_HEIGHT, WORLD_SCALE, WORLD_WIDTH } from './catalog';
 import {
+  createAirGliderGroup,
   createBoatEntityGroup,
   createCatGroup,
+  createExploreRuinGroup,
   createFernBushGeometry,
   createFlowerBloomGeometry,
   createFlowerStemGeometry,
@@ -18,7 +20,9 @@ import {
   createLowPolyCloud,
   createLowPolyVillager,
   createMemorialStoneGroup,
+  createSkyBirdGroup,
   createSkyBridgeGroup,
+  createSkyCablewayGroup,
   createSpringPoolGroup,
   createSuggestionStakeGroup,
   createTravelerGateVisitor,
@@ -236,6 +240,21 @@ export class LowPolyDioramaRenderer {
   private bridgesGroup = new THREE.Group();
   private bridgesKey = '';
 
+  private cablewaysGroup = new THREE.Group();
+  private cablewayCache = new Map<string, { key: string; group: THREE.Group }>();
+
+  private glidersGroup = new THREE.Group();
+  private gliderCache = new Map<string, { key: string; group: THREE.Group }>();
+
+  private exploreRuinsGroup = new THREE.Group();
+  private exploreRuinCache = new Map<string, { key: string; group: THREE.Group }>();
+
+  private projectileMesh: THREE.InstancedMesh;
+  private readonly maxProjectiles = 64;
+
+  private skyBirdsGroup = new THREE.Group();
+  private skyBirdStates: { mesh: THREE.Group; centerX: number; centerZ: number; baseY: number; radius: number; angle: number; speed: number; phase: number }[] = [];
+
   private wildNodesGroup = new THREE.Group();
   private wildNodeCache = new Map<string, { key: string; group: THREE.Group }>();
 
@@ -415,12 +434,12 @@ export class LowPolyDioramaRenderer {
     this.sunLight.position.set(40, 62, 32);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(2048, 2048);
-    this.sunLight.shadow.camera.left = -95;
-    this.sunLight.shadow.camera.right = 95;
-    this.sunLight.shadow.camera.top = 75;
-    this.sunLight.shadow.camera.bottom = -75;
+    this.sunLight.shadow.camera.left = -118;
+    this.sunLight.shadow.camera.right = 118;
+    this.sunLight.shadow.camera.top = 92;
+    this.sunLight.shadow.camera.bottom = -92;
     this.sunLight.shadow.camera.near = 6;
-    this.sunLight.shadow.camera.far = 220;
+    this.sunLight.shadow.camera.far = 260;
     this.sunLight.shadow.bias = -0.0005;
     this.sunLight.shadow.normalBias = 0.02;
     this.scene.add(this.sunLight);
@@ -494,17 +513,21 @@ export class LowPolyDioramaRenderer {
     this.scene.add(this.islandsGroup);
     this.scene.add(this.springsGroup);
     this.scene.add(this.landmarksGroup);
+    this.scene.add(this.exploreRuinsGroup);
     this.scene.add(this.bridgesGroup);
+    this.scene.add(this.cablewaysGroup);
     this.scene.add(this.wildNodesGroup);
     this.scene.add(this.suggestionsGroup);
     this.scene.add(this.memorialsGroup);
     this.scene.add(this.buildingsGroup);
     this.scene.add(this.villagersGroup);
+    this.scene.add(this.glidersGroup);
     this.scene.add(this.gateTravelersGroup);
     this.scene.add(this.livestockGroup);
     this.scene.add(this.wildHerdsGroup);
     this.scene.add(this.boatsGroup);
     this.scene.add(this.cloudsGroup);
+    this.scene.add(this.skyBirdsGroup);
     this.scene.add(this.peerMarkersGroup);
 
     // Instanced Archipelago Foliage with GPU Wind Sway
@@ -581,15 +604,44 @@ export class LowPolyDioramaRenderer {
     this.starsPoints = new THREE.Points(starGeom, this.starsMat);
     this.scene.add(this.starsPoints);
 
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 28; i++) {
       const cloud = createLowPolyCloud(1.8 + (i % 3) * 0.75);
-      const wx = -340 + i * 29;
-      const wz = -165 + (i % 6) * 62;
-      const y3 = 22.5 + (i % 4) * 4.0;
+      const wx = -420 + i * 31;
+      const wz = -220 + (i % 7) * 66;
+      const y3 = 23.5 + (i % 4) * 4.2;
       cloud.position.set(wx, y3, wz);
       this.cloudsGroup.add(cloud);
       this.cloudStates.push({ mesh: cloud, wx, wz, y3, speed: 0.65 + (i % 3) * 0.25 });
     }
+
+    // Soaring sky-bird flock circling above islands
+    for (let i = 0; i < 14; i++) {
+      const isl = ISLAND_DEFS[ISLAND_ORDER[i % ISLAND_ORDER.length]];
+      const bird = createSkyBirdGroup();
+      const angle = (i * 1.45) % (Math.PI * 2);
+      const radius = 14 + (i % 3) * 7.5;
+      const baseY = isl.elevationY + 9.5 + (i % 4) * 1.8;
+      this.skyBirdsGroup.add(bird);
+      this.skyBirdStates.push({
+        mesh: bird,
+        centerX: toWorldX(isl.centerX),
+        centerZ: toWorldZ(isl.centerY),
+        baseY,
+        radius,
+        angle,
+        speed: (i % 2 === 0 ? 1 : -1) * (0.28 + (i % 3) * 0.08),
+        phase: i * 0.9,
+      });
+    }
+
+    const projGeom = new THREE.ConeGeometry(0.11, 0.72, 4);
+    projGeom.rotateX(Math.PI / 2);
+    const projMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.projectileMesh = new THREE.InstancedMesh(projGeom, projMat, this.maxProjectiles);
+    this.projectileMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.projectileMesh.frustumCulled = false;
+    this.projectileMesh.count = 0;
+    this.scene.add(this.projectileMesh);
 
     const partGeom = new THREE.OctahedronGeometry(0.15, 0);
     const partMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -614,7 +666,7 @@ export class LowPolyDioramaRenderer {
 
   public getCameraBounds(viewW: number, viewH: number, camera: CameraState) {
     const aspect = viewW / Math.max(1, viewH);
-    const baseVh = 540 / Math.max(0.10, camera.zoom);
+    const baseVh = 540 / Math.max(0.085, camera.zoom);
     const vh = Math.max(220, Math.min(WORLD_HEIGHT, Math.round(baseVh)));
     const vw = Math.max(320, Math.min(WORLD_WIDTH, Math.round(vh * aspect)));
     const pxScale = viewW / Math.max(1, vw);
@@ -785,6 +837,137 @@ export class LowPolyDioramaRenderer {
     for (const br of world.bridges) {
       this.bridgesGroup.add(createSkyBridgeGroup(br, lit));
     }
+  }
+
+  private syncCableways(world: WorldState, lit: boolean) {
+    const activeIds = new Set<string>();
+    for (const cable of world.cableways) {
+      activeIds.add(cable.id);
+      const key = `${cable.built ? 1 : 0}_${lit}`;
+      let entry = this.cablewayCache.get(cable.id);
+      if (!entry || entry.key !== key) {
+        if (entry) {
+          this.cablewaysGroup.remove(entry.group);
+          disposeGroupGeometries(entry.group);
+        }
+        const group = createSkyCablewayGroup(cable, lit);
+        this.cablewaysGroup.add(group);
+        entry = { key, group };
+        this.cablewayCache.set(cable.id, entry);
+      }
+      const gondola = entry.group.userData.gondola as THREE.Object3D | undefined;
+      const pA = entry.group.userData.pA as [number, number, number] | undefined;
+      const pB = entry.group.userData.pB as [number, number, number] | undefined;
+      if (gondola && pA && pB) {
+        const t = Math.max(0.03, Math.min(0.97, cable.gondolaT));
+        gondola.position.set(
+          pA[0] + (pB[0] - pA[0]) * t,
+          pA[1] + (pB[1] - pA[1]) * t - Math.sin(t * Math.PI) * 0.45,
+          pA[2] + (pB[2] - pA[2]) * t,
+        );
+      }
+    }
+    for (const [id, entry] of this.cablewayCache.entries()) {
+      if (!activeIds.has(id)) {
+        this.cablewaysGroup.remove(entry.group);
+        disposeGroupGeometries(entry.group);
+        this.cablewayCache.delete(id);
+      }
+    }
+  }
+
+  private syncExploreRuins(world: WorldState, nightFactor: number, animTimeSec: number) {
+    const activeIds = new Set<string>();
+    for (const ruin of world.exploreRuins) {
+      activeIds.add(ruin.id);
+      const ready = ruin.cooldownTimer <= 0.1;
+      const lit = nightFactor > 0.25;
+      const key = `${ruin.kind}_${ready}_${lit}`;
+      let entry = this.exploreRuinCache.get(ruin.id);
+      if (!entry || entry.key !== key) {
+        if (entry) {
+          this.exploreRuinsGroup.remove(entry.group);
+          disposeGroupGeometries(entry.group);
+        }
+        const group = createExploreRuinGroup(ruin, nightFactor);
+        group.position.set(toWorldX(ruin.x), groundHeightAtSim(ruin.x, ruin.y), toWorldZ(ruin.y));
+        this.exploreRuinsGroup.add(group);
+        entry = { key, group };
+        this.exploreRuinCache.set(ruin.id, entry);
+      }
+      const crystal = entry.group.userData.hoverCrystal as THREE.Object3D | undefined;
+      if (crystal) {
+        crystal.rotation.y = animTimeSec * (ready ? 1.4 : 0.35);
+        crystal.position.y = 1.68 + Math.sin(animTimeSec * 2.3 + ruin.x * 0.02) * (ready ? 0.16 : 0.03);
+      }
+    }
+    for (const [id, entry] of this.exploreRuinCache.entries()) {
+      if (!activeIds.has(id)) {
+        this.exploreRuinsGroup.remove(entry.group);
+        disposeGroupGeometries(entry.group);
+        this.exploreRuinCache.delete(id);
+      }
+    }
+  }
+
+  private syncGliders(world: WorldState, animTimeSec: number) {
+    const activeIds = new Set<string>();
+    for (const gl of world.gliders) {
+      activeIds.add(gl.id);
+      const key = `${gl.wingColor}`;
+      let entry = this.gliderCache.get(gl.id);
+      if (!entry || entry.key !== key) {
+        if (entry) {
+          this.glidersGroup.remove(entry.group);
+          disposeGroupGeometries(entry.group);
+        }
+        const group = createAirGliderGroup(gl);
+        this.glidersGroup.add(group);
+        entry = { key, group };
+        this.gliderCache.set(gl.id, entry);
+      }
+      const startY = groundHeightAtSim(gl.startX, gl.startY) + 1.4;
+      const endY = groundHeightAtSim(gl.endX, gl.endY) + 1.0;
+      const t = Math.max(0, Math.min(1, gl.progress));
+      const y3 = startY + (endY - startY) * t + Math.sin(t * Math.PI) * gl.altitudeBoost;
+      entry.group.position.set(toWorldX(gl.x), y3, toWorldZ(gl.y));
+      entry.group.rotation.y = gl.yaw;
+      entry.group.rotation.z = Math.sin(animTimeSec * 2.6 + gl.x * 0.02) * 0.14;
+      entry.group.rotation.x = Math.cos(t * Math.PI) * -0.18;
+    }
+    for (const [id, entry] of this.gliderCache.entries()) {
+      if (!activeIds.has(id)) {
+        this.glidersGroup.remove(entry.group);
+        disposeGroupGeometries(entry.group);
+        this.gliderCache.delete(id);
+      }
+    }
+  }
+
+  private syncProjectiles(world: WorldState) {
+    let idx = 0;
+    for (let i = 0; i < world.projectiles.length && idx < this.maxProjectiles; i++) {
+      const pr = world.projectiles[i];
+      const t = Math.max(0, Math.min(1, pr.progress));
+      const sx = pr.fromX + (pr.toX - pr.fromX) * t;
+      const sy = pr.fromY + (pr.toY - pr.fromY) * t;
+      const x3 = toWorldX(sx);
+      const z3 = toWorldZ(sy);
+      const arc = Math.sin(t * Math.PI) * 2.2;
+      const y3 = pr.fromElev + (pr.toElev - pr.fromElev) * t + 1.0 + arc;
+      const yaw = Math.atan2(toWorldX(pr.toX) - toWorldX(pr.fromX), toWorldZ(pr.toY) - toWorldZ(pr.fromY));
+      this.tmpDummy.position.set(x3, y3, z3);
+      this.tmpDummy.rotation.set(Math.cos(t * Math.PI) * -0.25, yaw, 0);
+      this.tmpDummy.scale.setScalar(pr.kind === 'ember_bolt' ? 1.45 : 1.0);
+      this.tmpDummy.updateMatrix();
+      this.projectileMesh.setMatrixAt(idx, this.tmpDummy.matrix);
+      this.tmpColor.setHex(pr.kind === 'ember_bolt' ? 0xf97316 : 0xfef3c7);
+      this.projectileMesh.setColorAt(idx, this.tmpColor);
+      idx++;
+    }
+    this.projectileMesh.count = idx;
+    this.projectileMesh.instanceMatrix.needsUpdate = true;
+    if (this.projectileMesh.instanceColor) this.projectileMesh.instanceColor.needsUpdate = true;
   }
 
   private syncWildNodes(world: WorldState) {
@@ -1022,7 +1205,7 @@ export class LowPolyDioramaRenderer {
       }
 
       const g = entry.group;
-      if (v.state === 'sailing' && v.voyageBoatId) {
+      if ((v.state === 'sailing' && v.voyageBoatId) || v.state === 'gliding' || v.state === 'gondola') {
         g.visible = false;
         continue;
       }
@@ -1552,23 +1735,45 @@ export class LowPolyDioramaRenderer {
     if (this.cloudsGroup.visible) {
       for (const c of this.cloudStates) {
         c.wx += c.speed * dt * (world.settings.simSpeed || 1);
-        if (c.wx > 340) c.wx = -340;
+        if (c.wx > 420) c.wx = -420;
         c.mesh.position.set(c.wx, c.y3, c.wz);
       }
+    }
+
+    // Soaring sky-bird flock animation
+    const birdSimMult = world.settings.simSpeed === 0 ? 0.2 : 1;
+    for (const b of this.skyBirdStates) {
+      b.angle += b.speed * dt * birdSimMult;
+      const bx = b.centerX + Math.cos(b.angle) * b.radius;
+      const bz = b.centerZ + Math.sin(b.angle) * b.radius;
+      const by = b.baseY + Math.sin(animTimeSec * 0.9 + b.phase) * 0.7;
+      b.mesh.position.set(bx, by, bz);
+      const tangentYaw = Math.atan2(-Math.sin(b.angle) * b.speed, Math.cos(b.angle) * b.speed);
+      b.mesh.rotation.y = tangentYaw;
+      b.mesh.rotation.z = b.speed > 0 ? -0.18 : 0.18;
+      const flap = Math.sin(animTimeSec * 7.2 + b.phase) * 0.55;
+      const wingL = b.mesh.userData.wingL as THREE.Object3D | undefined;
+      const wingR = b.mesh.userData.wingR as THREE.Object3D | undefined;
+      if (wingL) wingL.rotation.z = flap;
+      if (wingR) wingR.rotation.z = -flap;
     }
 
     this.ensureIslands(season, weather);
     this.ensureSprings(lampsLit);
     this.ensureLandmarks(season, weather);
     this.ensureScatter(season, weather);
+    this.syncExploreRuins(world, atmo.nightFactor, animTimeSec);
     this.syncBridges(world, lampsLit);
+    this.syncCableways(world, lampsLit);
     this.syncWildNodes(world);
     this.syncPlacedSuggestions(world, animTimeSec);
     this.syncMemorials(world);
     this.syncBuildings(world, atmo.nightFactor, animTimeSec);
     this.syncPeople(world, selectedVillagerId, hoveredVillagerId, animTimeSec, dt);
+    this.syncGliders(world, animTimeSec);
     this.syncGateTravelers(world, animTimeSec);
     this.syncAnimalsAndBoats(world, animTimeSec, dt);
+    this.syncProjectiles(world);
     this.syncParticles(particles, world);
     this.syncPeerMarkers(peers, world, animTimeSec);
 
@@ -1581,7 +1786,7 @@ export class LowPolyDioramaRenderer {
       cameraState.focusIslandId !== 'all' ? ISLAND_DEFS[cameraState.focusIslandId].elevationY : 1.4;
     const ty = focusElev + 0.5;
 
-    const zoomDist = 1 / Math.max(0.10, Math.min(1.55, cameraState.zoom));
+    const zoomDist = 1 / Math.max(0.085, Math.min(1.55, cameraState.zoom));
     this.tmpTarget.set(tx, ty, tz);
     this.tmpVec.set(tx - 3.5 * zoomDist, ty + 32 * zoomDist, tz + 36 * zoomDist);
     this.camera.position.copy(this.tmpVec);
@@ -1676,17 +1881,21 @@ export class LowPolyDioramaRenderer {
     disposeGroupGeometries(this.waterfallsGroup);
     disposeGroupGeometries(this.springsGroup);
     disposeGroupGeometries(this.landmarksGroup);
+    disposeGroupGeometries(this.exploreRuinsGroup);
     disposeGroupGeometries(this.bridgesGroup);
+    disposeGroupGeometries(this.cablewaysGroup);
     disposeGroupGeometries(this.wildNodesGroup);
     disposeGroupGeometries(this.suggestionsGroup);
     disposeGroupGeometries(this.memorialsGroup);
     disposeGroupGeometries(this.buildingsGroup);
     disposeGroupGeometries(this.villagersGroup);
+    disposeGroupGeometries(this.glidersGroup);
     disposeGroupGeometries(this.gateTravelersGroup);
     disposeGroupGeometries(this.livestockGroup);
     disposeGroupGeometries(this.wildHerdsGroup);
     disposeGroupGeometries(this.boatsGroup);
     disposeGroupGeometries(this.cloudsGroup);
+    disposeGroupGeometries(this.skyBirdsGroup);
     disposeGroupGeometries(this.peerMarkersGroup);
     disposeGroupGeometries(this.catGroup);
 
@@ -1694,6 +1903,8 @@ export class LowPolyDioramaRenderer {
     (this.celestialOrb.material as THREE.Material).dispose();
     this.starsPoints.geometry.dispose();
     this.starsMat.dispose();
+    this.projectileMesh.geometry.dispose();
+    (this.projectileMesh.material as THREE.Material).dispose();
     this.particleMesh.geometry.dispose();
     (this.particleMesh.material as THREE.Material).dispose();
 

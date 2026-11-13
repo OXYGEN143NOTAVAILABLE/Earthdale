@@ -4,13 +4,16 @@ import { ISLAND_DEFS } from './catalog';
 import { groundHeightAtSim, toWorldX, toWorldZ } from './lowPolyWorld';
 import { CULTURES } from './techAndCultures';
 import type {
+  AirGliderEntity,
   ArrivalCandidate,
   BoatEntity,
   BuildingEntity,
   BuildingType,
+  ExploreRuinEntity,
   LivestockEntity,
   SeasonType,
   SkyBridgeEntity,
+  SkyCablewayEntity,
   VillagerEntity,
   WeatherType,
   WildHerdEntity,
@@ -156,22 +159,23 @@ export function createLowPolyTree(
 
   if (kind === 'pine' || kind === 'cedar') {
     const isCedar = kind === 'cedar';
-    const roots = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.42, 0.48, 6), barkDarkMat);
-    roots.position.y = 0.02;
+    const roots = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.56, 0.68, 6), barkDarkMat);
+    roots.position.y = 0.04;
     group.add(roots);
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.23, isCedar ? 1.1 : 0.9, 6), trunkMat);
-    trunk.position.y = isCedar ? 0.62 : 0.52;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.29, isCedar ? 1.65 : 1.38, 6), trunkMat);
+    trunk.position.y = isCedar ? 0.9 : 0.76;
     group.add(trunk);
 
-    const leafDark = getFlatMaterial(snow ? 0x45635a : isCedar ? 0x2a5443 : 0x2f593c, { roughness: 0.86 });
-    const leafLit = getFlatMaterial(snow ? 0x5c7d73 : isCedar ? 0x3b7157 : 0x3e714c, { roughness: 0.82 });
+    const leafDark = getFlatMaterial(snow ? 0x45635a : isCedar ? 0x264f3e : 0x2b5538, { roughness: 0.86 });
+    const leafLit = getFlatMaterial(snow ? 0x5c7d73 : isCedar ? 0x386d53 : 0x3b6f49, { roughness: 0.82 });
     const snowMat = getFlatMaterial(0xf0f6fa, { roughness: 0.7 });
 
     const tiers = [
-      { r: isCedar ? 1.18 : 1.04, h: 1.15, y: 1.28, mat: leafDark },
-      { r: isCedar ? 0.92 : 0.82, h: 1.05, y: 1.95, mat: leafLit },
-      { r: 0.62, h: 0.92, y: 2.55, mat: leafDark },
-      { r: 0.36, h: 0.72, y: 3.06, mat: leafLit },
+      { r: isCedar ? 1.48 : 1.32, h: 1.42, y: 1.56, mat: leafDark },
+      { r: isCedar ? 1.2 : 1.08, h: 1.3, y: 2.38, mat: leafLit },
+      { r: isCedar ? 0.92 : 0.82, h: 1.15, y: 3.12, mat: leafDark },
+      { r: 0.62, h: 0.98, y: 3.78, mat: leafLit },
+      { r: 0.36, h: 0.78, y: 4.34, mat: leafDark },
     ];
     tiers.forEach((t, idx) => {
       const cone = new THREE.Mesh(new THREE.ConeGeometry(t.r, t.h, 7), t.mat);
@@ -187,21 +191,26 @@ export function createLowPolyTree(
       }
     });
   } else {
-    const roots = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.4, 0.44, 6), barkDarkMat);
-    roots.position.y = 0.01;
+    const roots = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.52, 0.64, 6), barkDarkMat);
+    roots.position.y = 0.02;
     group.add(roots);
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.25, 1.08, 6), trunkMat);
-    trunk.position.y = 0.58;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.32, 1.55, 6), trunkMat);
+    trunk.position.y = 0.82;
     group.add(trunk);
 
-    const branchA = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, 0.66, 5), trunkMat);
-    branchA.position.set(0.24, 1.02, 0.06);
+    const branchA = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.13, 0.88, 5), trunkMat);
+    branchA.position.set(0.32, 1.42, 0.08);
     branchA.rotation.z = -0.62;
     group.add(branchA);
 
-    let crownColor = 0x4c7e45;
-    let accentColor = 0x6ca65b;
-    let highlightColor = 0x82bb6a;
+    const branchB = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.12, 0.78, 5), trunkMat);
+    branchB.position.set(-0.28, 1.32, -0.1);
+    branchB.rotation.z = 0.58;
+    group.add(branchB);
+
+    let crownColor = 0x487a42;
+    let accentColor = 0x67a156;
+    let highlightColor = 0x7eb866;
     if (snow) {
       crownColor = 0x869c95;
       accentColor = 0xdbe7ee;
@@ -225,10 +234,11 @@ export function createLowPolyTree(
     const hiMat = getFlatMaterial(highlightColor, { roughness: 0.76 });
 
     const puffs: [number, number, number, number, THREE.MeshStandardMaterial][] = [
-      [0, 1.66, 0, 0.88, crownMat],
-      [-0.48, 1.48, 0.24, 0.6, accentMat],
-      [0.48, 1.54, -0.2, 0.64, accentMat],
-      [0.14, 2.06, 0.12, 0.54, hiMat],
+      [0, 2.28, 0, 1.18, crownMat],
+      [-0.64, 1.98, 0.32, 0.82, accentMat],
+      [0.64, 2.04, -0.26, 0.86, accentMat],
+      [-0.2, 2.15, -0.52, 0.74, crownMat],
+      [0.18, 2.84, 0.14, 0.72, hiMat],
     ];
     for (const [px, py, pz, pr, mat] of puffs) {
       const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(pr, 1), mat);
@@ -239,18 +249,18 @@ export function createLowPolyTree(
     if (kind === 'orchard' && season === 'autumn') {
       const appleMat = getFlatMaterial(0xd9413d, { roughness: 0.4 });
       for (const [ax, ay, az] of [
-        [-0.46, 1.38, 0.5],
-        [0.44, 1.45, 0.46],
-        [0.08, 1.88, 0.54],
+        [-0.62, 1.88, 0.65],
+        [0.58, 1.94, 0.62],
+        [0.1, 2.52, 0.72],
       ]) {
-        const apple = new THREE.Mesh(new THREE.DodecahedronGeometry(0.11, 0), appleMat);
+        const apple = new THREE.Mesh(new THREE.DodecahedronGeometry(0.13, 0), appleMat);
         apple.position.set(ax, ay, az);
         group.add(apple);
       }
     }
   }
 
-  group.scale.setScalar(scale);
+  group.scale.setScalar(scale * 1.15);
   setShadows(group, true, true);
   return group;
 }
@@ -750,8 +760,8 @@ export function createLowPolyBuilding(
       }
     }
 
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(3.05 * wScale, 0.52, 2.3), stoneMat);
-    plinth.position.y = 0.04 + stiltBoost;
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(3.08 * wScale, 1.15, 2.34), stoneMat);
+    plinth.position.y = -0.24 + stiltBoost;
     group.add(plinth);
     const body = new THREE.Mesh(new THREE.BoxGeometry(2.8 * wScale, 1.44, 2.08), wallMat);
     body.position.y = 1.02 + stiltBoost;
@@ -987,8 +997,8 @@ export function createLowPolyBuilding(
     bulb.position.set(2.15, 0.76, 0.62);
     group.add(bulb);
   } else if (b.type === 'watchtower') {
-    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.38, 0.56, 6), stoneMat);
-    plinth.position.y = 0.08;
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.45, 1.18, 6), stoneMat);
+    plinth.position.y = -0.22;
     group.add(plinth);
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.84, 1.02, 2.3 + lv * 0.22, 6), stoneLightMat);
     shaft.position.y = 1.48 + lv * 0.11;
@@ -1003,9 +1013,50 @@ export function createLowPolyBuilding(
     const flag = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.34, 0.05), bannerMat);
     flag.position.set(0.32, 4.18 + lv * 0.22, 0);
     group.add(flag);
+  } else if (b.type === 'glider_pad') {
+    const stoneBase = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.9, 2.3), stoneMat);
+    stoneBase.position.y = -0.24;
+    group.add(stoneBase);
+    const rampDeck = new THREE.Mesh(new THREE.BoxGeometry(3.15, 0.18, 1.85), timberLightMat);
+    rampDeck.position.set(0.25, 0.56, 0);
+    rampDeck.rotation.z = 0.18;
+    group.add(rampDeck);
+    for (const [px, pz, h] of [
+      [-1.05, -0.78, 0.65],
+      [-1.05, 0.78, 0.65],
+      [1.35, -0.78, 1.15],
+      [1.35, 0.78, 1.15],
+    ]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, h, 5), woodMat);
+      post.position.set(px, h * 0.5, pz);
+      group.add(post);
+    }
+    // Windsock mast + bright cloth windsock
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 2.35, 5), woodMat);
+    mast.position.set(-1.18, 1.25, -0.82);
+    group.add(mast);
+    const sock = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.85, 6), bannerMat);
+    sock.rotation.z = -Math.PI / 2;
+    sock.position.set(-0.72, 2.24, -0.82);
+    group.add(sock);
+    // Parked folded glider on ramp
+    const wingMat = getFlatMaterial(culture.sailColor, { roughness: 0.68 });
+    const parkedL = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.05, 0.82), wingMat);
+    parkedL.position.set(0.35, 0.74, -0.48);
+    parkedL.rotation.y = 0.35;
+    parkedL.rotation.z = 0.18;
+    group.add(parkedL);
+    const parkedR = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.05, 0.82), wingMat);
+    parkedR.position.set(0.35, 0.74, 0.48);
+    parkedR.rotation.y = -0.35;
+    parkedR.rotation.z = 0.18;
+    group.add(parkedR);
+    const bulb = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), winMat);
+    bulb.position.set(1.38, 1.32, 0.78);
+    group.add(bulb);
   } else if (b.type === 'barracks') {
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.52, 2.4), stoneMat);
-    plinth.position.y = 0.04;
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(3.25, 1.15, 2.45), stoneMat);
+    plinth.position.y = -0.24;
     group.add(plinth);
     const body = new THREE.Mesh(new THREE.BoxGeometry(2.96, 1.48, 2.15), stoneLightMat);
     body.position.y = 1.04;
@@ -1672,11 +1723,255 @@ export function createLandmarkGroup(
     const boulder = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55, 0), rockMat);
     boulder.position.set(-0.35, 0.72, 0.25);
     g.add(boulder);
+  } else if (lm.kind === 'crystal_spire') {
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.12, 0.42, 6), rockDarkMat);
+    base.position.y = 0.14;
+    g.add(base);
+    const crysMat = getFlatMaterial(0x7be0ea, {
+      roughness: 0.18,
+      metalness: 0.25,
+      emissive: 0x38bdf8,
+      emissiveIntensity: 0.55,
+    });
+    const spireMain = new THREE.Mesh(new THREE.OctahedronGeometry(0.62, 0), crysMat);
+    spireMain.scale.set(0.75, 2.6, 0.75);
+    spireMain.position.y = 1.45;
+    g.add(spireMain);
+    for (const [ox, oz, s] of [[-0.48, 0.28, 0.52], [0.46, -0.25, 0.48]]) {
+      const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), crysMat);
+      shard.scale.set(0.75, 1.8 * s * 2, 0.75);
+      shard.position.set(ox, 0.85, oz);
+      shard.rotation.z = ox > 0 ? -0.24 : 0.24;
+      g.add(shard);
+    }
   }
 
   g.scale.setScalar(lm.scale);
   g.rotation.y = lm.rotY;
   setShadows(g, true, true);
+  return g;
+}
+
+export function createExploreRuinGroup(ruin: ExploreRuinEntity, nightFactor: number): THREE.Group {
+  const g = new THREE.Group();
+  const isVault = ruin.kind === 'ashen_vault';
+  const isFrost = ruin.kind === 'frost_shrine';
+  const stoneMat = getFlatMaterial(isVault ? 0x3b3332 : isFrost ? 0x6f8294 : 0x9b9586, { roughness: 0.92 });
+  const trimMat = getFlatMaterial(isVault ? 0x5c362e : isFrost ? 0xa3bfd4 : 0xbcb5a4, { roughness: 0.82 });
+  const glowHex = isVault ? 0xf97316 : isFrost ? 0x67e8f9 : 0xfde047;
+  const ready = ruin.cooldownTimer <= 0.1;
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.38, 1.65, 0.45, 6), stoneMat);
+  base.position.y = 0.08;
+  g.add(base);
+
+  const innerRing = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.22, 6), trimMat);
+  innerRing.position.y = 0.36;
+  g.add(innerRing);
+
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const pillar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.32, i % 2 === 0 ? 1.85 : 1.42, 0.32),
+      i % 2 === 0 ? stoneMat : trimMat,
+    );
+    pillar.position.set(Math.cos(ang) * 0.92, i % 2 === 0 ? 1.05 : 0.84, Math.sin(ang) * 0.92);
+    pillar.rotation.z = i === 1 ? 0.08 : 0;
+    g.add(pillar);
+  }
+
+  const crystalMat = getFlatMaterial(ready ? glowHex : 0x64748b, {
+    emissive: ready ? glowHex : 0x000000,
+    emissiveIntensity: ready ? (nightFactor > 0.25 ? 1.5 : 0.85) : 0,
+    roughness: 0.22,
+    metalness: 0.3,
+  });
+  const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), crystalMat);
+  crystal.scale.set(0.85, 1.45, 0.85);
+  crystal.position.y = 1.68;
+  g.add(crystal);
+  g.userData.hoverCrystal = crystal;
+
+  setShadows(g, true, true);
+  return g;
+}
+
+export function createSkyCablewayGroup(cable: SkyCablewayEntity, lit: boolean): THREE.Group {
+  const g = new THREE.Group();
+  const x1 = toWorldX(cable.x1);
+  const z1 = toWorldZ(cable.y1);
+  const y1 = groundHeightAtSim(cable.x1, cable.y1);
+  const x2 = toWorldX(cable.x2);
+  const z2 = toWorldZ(cable.y2);
+  const y2 = groundHeightAtSim(cable.x2, cable.y2);
+
+  const woodMat = getFlatMaterial(0x6e4a2f, { roughness: 0.86 });
+  const ironMat = getFlatMaterial(0x3a414a, { roughness: 0.45, metalness: 0.72 });
+  const brassMat = getFlatMaterial(0xd8a13e, { roughness: 0.35, metalness: 0.75 });
+  const ropeMat = getFlatMaterial(0xcab68a, { roughness: 0.85 });
+  const lanternMat = getFlatMaterial(lit ? 0xfde047 : 0x9aa6ad, {
+    emissive: lit ? 0xf59e0b : 0x000000,
+    emissiveIntensity: lit ? 1.4 : 0,
+    roughness: 0.3,
+  });
+
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const yaw = Math.atan2(dx, dz);
+
+  // Twin cliffside cableway pylon stations
+  for (const [px, py, pz] of [
+    [x1, y1, z1],
+    [x2, y2, z2],
+  ]) {
+    const pylon = new THREE.Group();
+    pylon.position.set(px, py, pz);
+    pylon.rotation.y = yaw;
+
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.9, 2.0), getFlatMaterial(0x736b60, { roughness: 0.94 }));
+    plinth.position.y = -0.15;
+    pylon.add(plinth);
+
+    for (const sx of [-0.65, 0.65]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 3.0, 5), woodMat);
+      post.position.set(sx, 1.5, 0);
+      pylon.add(post);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.2, 0.24), woodMat);
+    beam.position.set(0, 2.9, 0);
+    pylon.add(beam);
+
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.12, 8), ironMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(0, 2.95, 0);
+    pylon.add(wheel);
+
+    const lamp = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), lanternMat);
+    lamp.position.set(0.75, 3.18, 0);
+    pylon.add(lamp);
+
+    g.add(pylon);
+  }
+
+  if (cable.built) {
+    const pA = new THREE.Vector3(x1, y1 + 2.95, z1);
+    const pB = new THREE.Vector3(x2, y2 + 2.95, z2);
+    const dir = pB.clone().sub(pA);
+    const len = dir.length();
+    if (len > 0.1) {
+      const line = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, len, 5), ironMat);
+      line.position.copy(pA).add(pB).multiplyScalar(0.5);
+      line.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+      g.add(line);
+
+      const lowerLine = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, len, 4), ropeMat);
+      lowerLine.position.copy(pA).add(pB).multiplyScalar(0.5).add(new THREE.Vector3(0, -0.35, 0));
+      lowerLine.quaternion.copy(line.quaternion);
+      g.add(lowerLine);
+    }
+
+    // Hanging animated gondola carriage
+    const gondola = new THREE.Group();
+    const hanger = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.05, 4), ironMat);
+    hanger.position.y = -0.52;
+    gondola.add(hanger);
+
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.88, 0.45, 4), brassMat);
+    roof.rotation.y = Math.PI / 4;
+    roof.position.y = -1.05;
+    gondola.add(roof);
+
+    const basket = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.65, 1.15), woodMat);
+    basket.position.y = -1.58;
+    gondola.add(basket);
+
+    const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), lanternMat);
+    beacon.position.set(0, -0.95, 0.58);
+    gondola.add(beacon);
+
+    gondola.rotation.y = yaw;
+    const t = Math.max(0.03, Math.min(0.97, cable.gondolaT));
+    gondola.position.set(
+      x1 + (x2 - x1) * t,
+      y1 + 2.95 + (y2 - y1) * t - Math.sin(t * Math.PI) * 0.45,
+      z1 + (z2 - z1) * t,
+    );
+    g.add(gondola);
+    g.userData.gondola = gondola;
+    g.userData.pA = [x1, y1 + 2.95, z1];
+    g.userData.pB = [x2, y2 + 2.95, z2];
+  }
+
+  setShadows(g, true, true);
+  return g;
+}
+
+export function createAirGliderGroup(glider: AirGliderEntity): THREE.Group {
+  const g = new THREE.Group();
+  const woodMat = getFlatMaterial(0x7c5032, { roughness: 0.84 });
+  const wingMat = getFlatMaterial(glider.wingColor || '#EFE4CE', { roughness: 0.68 });
+  const accentMat = getFlatMaterial(0xd97706, { roughness: 0.65 });
+
+  // Swept V-wings
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.06, 0.92), wingMat);
+    wing.position.set(-0.15, 0.14, side * 0.72);
+    wing.rotation.y = side * 0.34;
+    wing.rotation.x = side * 0.12;
+    g.add(wing);
+  }
+  const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.95, 5), woodMat);
+  spine.rotation.z = Math.PI / 2;
+  spine.position.set(0, 0.1, 0);
+  g.add(spine);
+
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.05, 0.75), accentMat);
+  tail.position.set(-0.92, 0.16, 0);
+  g.add(tail);
+
+  // Pilot clinging below wing frame
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.56, 6), accentMat);
+  torso.position.set(0.05, -0.34, 0);
+  torso.rotation.z = -0.55;
+  g.add(torso);
+  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 0), getFlatMaterial(0xf4d5bd));
+  head.position.set(0.32, -0.18, 0);
+  g.add(head);
+
+  setShadows(g, true, false);
+  return g;
+}
+
+export function createSkyBirdGroup(): THREE.Group {
+  const g = new THREE.Group();
+  const bodyMat = getFlatMaterial(0xf8fafc, { roughness: 0.72 });
+  const wingMat = getFlatMaterial(0xdbe6f0, { roughness: 0.74 });
+  const beakMat = getFlatMaterial(0xf59e0b, { roughness: 0.5 });
+
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.62, 5), bodyMat);
+  body.rotation.x = Math.PI / 2;
+  g.add(body);
+
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.18, 4), beakMat);
+  beak.rotation.x = Math.PI / 2;
+  beak.position.set(0, 0, 0.38);
+  g.add(beak);
+
+  const wingL = new THREE.Group();
+  const wL = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.04, 0.24), wingMat);
+  wL.position.set(-0.34, 0, 0);
+  wingL.add(wL);
+  g.add(wingL);
+  g.userData.wingL = wingL;
+
+  const wingR = new THREE.Group();
+  const wR = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.04, 0.24), wingMat);
+  wR.position.set(0.34, 0, 0);
+  wingR.add(wR);
+  g.add(wingR);
+  g.userData.wingR = wingR;
+
+  setShadows(g, false, false);
   return g;
 }
 

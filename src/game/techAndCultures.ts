@@ -54,12 +54,23 @@ export const CULTURES: Record<CultureId, CultureDefinition> = {
     summary: 'Wary outer-sea navigators with crescent-prow galleys and driftwood piers.',
     bonusLabel: '+25% Sea Speed & Deep-Net Fishing',
   },
+  ashen_raider: {
+    id: 'ashen_raider',
+    name: 'Ashen Bastion',
+    bannerColor: '#B84A3E',
+    accentColor: '#F59E0B',
+    roofColor: '#542B27',
+    sailColor: '#7E322D',
+    archStyle: 'crag_bastion',
+    summary: 'Volcanic fortress clan hoarding iron & relics atop Ashen Bastion—ripe for battle expeditions.',
+    bonusLabel: 'Rich Iron Spoils & Fierce Garrison',
+  },
 };
 
 export const TECH_BRANCH_LABELS: Record<TechBranch, string> = {
   hearth_shelter: 'Hearth & Shelter',
   botany_pastures: 'Botany & Pastures',
-  maritime_bridges: 'Maritime & Bridges',
+  maritime_bridges: 'Maritime, Gliders & Spans',
   metallurgy_war: 'Metallurgy & Defense',
 };
 
@@ -158,7 +169,7 @@ export const TECH_TREE: TechNode[] = [
     unlocksLabel: 'Orchard Terraces · Era IV Readiness',
   },
 
-  // Branch 3: Maritime & Bridges
+  // Branch 3: Maritime, Gliders & Bridges
   {
     id: 'rope_bridges',
     name: 'Rope & Plank Spans',
@@ -167,7 +178,7 @@ export const TECH_TREE: TechNode[] = [
     costXp: 44,
     prereqs: ['woven_shelter'],
     summary: 'Woven hemp cables and cedar planks link neighboring floating cliffs.',
-    unlocksLabel: 'Sky-Bridges to Ridge & Terrace',
+    unlocksLabel: 'Sky-Bridges to Ridge, Terrace & Starbloom',
   },
   {
     id: 'dugout_docks',
@@ -180,6 +191,16 @@ export const TECH_TREE: TechNode[] = [
     unlocksLabel: 'Island Docks · Fishing Skiffs',
   },
   {
+    id: 'wind_gliders',
+    name: 'Canvas Wind-Gliders',
+    branch: 'maritime_bridges',
+    era: 2,
+    costXp: 78,
+    prereqs: ['rope_bridges', 'timber_joinery'],
+    summary: 'Bamboo frames and stretched flax wings let scouts ride cliff updrafts between floating islands.',
+    unlocksLabel: 'Glider Launch Pad · Airborne Crossing',
+  },
+  {
     id: 'sail_navigation',
     name: 'Lateen Sails & Trade',
     branch: 'maritime_bridges',
@@ -190,14 +211,24 @@ export const TECH_TREE: TechNode[] = [
     unlocksLabel: 'Merchant Cargo Ships · Ocean Crossing',
   },
   {
+    id: 'cliff_cableways',
+    name: 'Cliff Sky-Cableways',
+    branch: 'maritime_bridges',
+    era: 3,
+    costXp: 125,
+    prereqs: ['wind_gliders', 'masonry_bakery'],
+    summary: 'Tensioned iron-and-hemp cable lines hoist suspended gondolas up sheer alpine spires and volcanic fortresses.',
+    unlocksLabel: 'Sky-Gondola Cableways to Frostpeak & Bastion',
+  },
+  {
     id: 'sky_causeways',
     name: 'High-Arch Causeways',
     branch: 'maritime_bridges',
     era: 4,
     costXp: 145,
     prereqs: ['rope_bridges', 'masonry_bakery'],
-    summary: 'Stone-arched high bridges span dizzying chasms to Copper-Crag Spire.',
-    unlocksLabel: 'High-Tier Copper-Crag Sky-Bridge',
+    summary: 'Stone-arched high bridges span dizzying chasms to Copper-Crag & Ashen Bastion.',
+    unlocksLabel: 'High-Tier Stone Viaducts',
   },
 
   // Branch 4: Metallurgy & Defense
@@ -392,6 +423,18 @@ export const BUILDING_BLUEPRINTS: Record<BuildingType, BuildingBlueprint> = {
     baseCost: { timber: 24, stone: 10 },
     description: 'Coastal slipway building Fishing Skiffs, Cargo Ships & War Galleys.',
     benefitDescription: 'Launches fleet & links island sea trade',
+  },
+  glider_pad: {
+    type: 'glider_pad',
+    name: 'Wind-Glider Cliff Ramp',
+    category: 'maritime',
+    requiredTechId: 'wind_gliders',
+    maxLevel: 3,
+    housingCapacity: 0,
+    footprint: { rx: 18, ry: 15 },
+    baseCost: { timber: 22, wool: 6 },
+    description: 'Elevated timber launch ramp and windsock dispatching villagers on soaring canvas gliders.',
+    benefitDescription: 'Airborne island travel & rapid scouting',
   },
   watchtower: {
     type: 'watchtower',

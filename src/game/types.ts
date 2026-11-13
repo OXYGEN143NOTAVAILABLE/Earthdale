@@ -8,11 +8,21 @@ export type SeasonType = 'spring' | 'summer' | 'autumn' | 'winter';
 
 export type TimePreset = 'dawn' | 'day' | 'golden' | 'dusk' | 'night';
 
-export type IslandId = 'cradle' | 'timbercrown' | 'sunterrace' | 'coppercrag' | 'mistatoll';
+export type IslandId =
+  | 'cradle'
+  | 'timbercrown'
+  | 'sunterrace'
+  | 'coppercrag'
+  | 'mistatoll'
+  | 'starbloom'
+  | 'embervault'
+  | 'frostpeak';
 
-export type CultureId = 'hearthfolk' | 'sylvan' | 'cragforge' | 'mist_mariner';
+export type CultureId = 'hearthfolk' | 'sylvan' | 'cragforge' | 'mist_mariner' | 'ashen_raider';
 
 export type ArchStyle = 'timber_thatch' | 'sylvan_stilt' | 'crag_bastion' | 'mariner_driftwood';
+
+export type IslandBiome = 'meadow' | 'pine' | 'terrace' | 'crag' | 'mist_atoll' | 'ruins' | 'volcanic' | 'frost';
 
 export type VillageCustomId =
   | 'nightly_hearth_circle'
@@ -72,7 +82,8 @@ export type LandmarkKind =
   | 'reed_clump'
   | 'driftwood'
   | 'sky_islet'
-  | 'ruin_cairn';
+  | 'ruin_cairn'
+  | 'crystal_spire';
 
 export interface WorldLandmark {
   id: string;
@@ -99,6 +110,8 @@ export type VillagerActivityState =
   | 'exploring'
   | 'inspecting'
   | 'sailing'
+  | 'gliding'
+  | 'gondola'
   | 'fighting'
   | 'festival';
 
@@ -116,6 +129,7 @@ export type BuildingType =
   | 'library'
   | 'smeltery'
   | 'dock'
+  | 'glider_pad'
   | 'watchtower'
   | 'barracks';
 
@@ -216,7 +230,8 @@ export interface IslandDef {
   id: IslandId;
   name: string;
   subtitle: string;
-  biome: 'meadow' | 'pine' | 'terrace' | 'crag' | 'mist_atoll';
+  biome: IslandBiome;
+  roleTag: 'homeland' | 'timber' | 'harvest' | 'forge' | 'harbor' | 'exploration' | 'battle' | 'alpine';
   centerX: number;
   centerY: number;
   radiusX: number;
@@ -255,6 +270,69 @@ export interface SkyBridgeEntity {
   requiredTechId: string;
   costTimber: number;
   costStone: number;
+}
+
+export interface SkyCablewayEntity {
+  id: string;
+  name: string;
+  fromIsland: IslandId;
+  toIsland: IslandId;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  built: boolean;
+  progress: number;
+  requiredTechId: string;
+  costTimber: number;
+  costStone: number;
+  costIron: number;
+  gondolaT: number; // 0..1 along cable
+  gondolaDir: 1 | -1;
+  passengerIds: string[];
+}
+
+export interface AirGliderEntity {
+  id: string;
+  villagerId: string;
+  fromIsland: IslandId;
+  toIsland: IslandId;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  progress: number; // 0..1
+  x: number;
+  y: number;
+  altitudeBoost: number;
+  yaw: number;
+  wingColor: string;
+}
+
+export interface ExploreRuinEntity {
+  id: string;
+  name: string;
+  islandId: IslandId;
+  kind: 'sun_obelisk' | 'star_observatory' | 'frost_shrine' | 'ashen_vault' | 'cedar_totem';
+  x: number;
+  y: number;
+  exploredCount: number;
+  cooldownTimer: number;
+  lootLabel: string;
+  guardianThreat: boolean;
+}
+
+export interface ProjectileFx {
+  id: string;
+  kind: 'arrow' | 'ember_bolt';
+  fromX: number;
+  fromY: number;
+  fromElev: number;
+  toX: number;
+  toY: number;
+  toElev: number;
+  progress: number; // 0..1
+  duration: number;
 }
 
 export interface WildNodeEntity {
@@ -304,6 +382,8 @@ export interface VillagerEntity {
   curiosity: number; // 0..1 autonomous urge to explore & sail
   bravery: number; // 0..1 willingness to hunt boars & defend
   voyageBoatId: string | null;
+  transitGliderId?: string | null;
+  transitCableId?: string | null;
   killCount: number;
   cognition: VillagerCognition;
 
@@ -521,7 +601,7 @@ export interface SettingsState {
 export interface CameraState {
   x: number;
   y: number;
-  zoom: number; // 0.11 (All Islands Overview) .. 1.55 (Detail)
+  zoom: number; // 0.09 (All Islands Overview) .. 1.55 (Detail)
   followVillagerId: string | null;
   focusIslandId: IslandId | 'all';
 }
@@ -554,10 +634,14 @@ export interface WorldState {
   islands: Record<IslandId, IslandState>;
   villageCultures: Record<IslandId, VillageCultureProfile>;
   bridges: SkyBridgeEntity[];
+  cableways: SkyCablewayEntity[];
+  gliders: AirGliderEntity[];
+  exploreRuins: ExploreRuinEntity[];
+  projectiles: ProjectileFx[];
   wildNodes: WildNodeEntity[];
   villagers: VillagerEntity[];
-  clanVillagers: VillagerEntity[]; // Native inhabitants on Timbercrown, Copper-Crag & Mist Atoll
-  raiders: VillagerEntity[]; // Mist-Mariner patrols / hostile raiders when at war
+  clanVillagers: VillagerEntity[]; // Native inhabitants on outer villages
+  raiders: VillagerEntity[]; // Hostile raiders & bastion defenders
   buildings: BuildingEntity[];
   placedSuggestions: PlacedSuggestion[];
   livestock: LivestockEntity[];
@@ -605,6 +689,9 @@ export interface HudSnapshot {
   islands: Record<IslandId, IslandState>;
   villageCultures: Record<IslandId, VillageCultureProfile>;
   bridges: SkyBridgeEntity[];
+  cableways: SkyCablewayEntity[];
+  gliders: AirGliderEntity[];
+  exploreRuins: ExploreRuinEntity[];
   villagers: VillagerEntity[];
   clanVillagers: VillagerEntity[];
   raiders: VillagerEntity[];
@@ -665,6 +752,7 @@ export type WorldCommand =
   | { kind: 'sovereign_grant_resources' }
   | { kind: 'sovereign_spawn_villager'; islandId: IslandId }
   | { kind: 'sovereign_build_bridge'; bridgeId: string }
+  | { kind: 'sovereign_build_cableway'; cableId: string }
   | { kind: 'sovereign_uplift_villager'; villagerId: string }
   | { kind: 'sovereign_unlock_all_tech' };
 
