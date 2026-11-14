@@ -4,8 +4,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
+import { ISLAND_DEFS } from './src/game/catalog';
 import {
   applyWorldCommand,
+  assignPlayerVillageInWorld,
   createInitialWorld,
   createParticlePool,
   stepSimulation,
@@ -127,6 +129,8 @@ async function startServer() {
       if (parsed.type === 'create_room') {
         const code = makeRoomCode();
         const world = createInitialWorld(parsed.gameMode || 'sovereign_sandbox');
+        const homeIslandId = assignPlayerVillageInWorld(world, playerId, 'cradle');
+        const homeDef = ISLAND_DEFS[homeIslandId];
         const room: GameRoom = {
           code,
           world,
@@ -138,9 +142,10 @@ async function startServer() {
           id: playerId,
           name: (parsed.playerName || 'Deity').slice(0, 20),
           color: parsed.playerColor || '#E5AF47',
-          focusIslandId: 'all',
-          cursorSimX: 2260,
-          cursorSimY: 2560,
+          homeIslandId,
+          focusIslandId: homeIslandId,
+          cursorSimX: homeDef.centerX,
+          cursorSimY: homeDef.centerY,
           isHost: true,
         };
         room.players.set(playerId, { id: playerId, ws, presence });
@@ -163,13 +168,16 @@ async function startServer() {
           sendMsg(ws, { type: 'error', message: `Room "${code}" not found.` });
           return;
         }
+        const homeIslandId = assignPlayerVillageInWorld(room.world, playerId);
+        const homeDef = ISLAND_DEFS[homeIslandId];
         const presence: RoomPlayerPresence = {
           id: playerId,
           name: (parsed.playerName || 'Co-Deity').slice(0, 20),
           color: parsed.playerColor || '#68B2D8',
-          focusIslandId: 'all',
-          cursorSimX: 2260,
-          cursorSimY: 2560,
+          homeIslandId,
+          focusIslandId: homeIslandId,
+          cursorSimX: homeDef.centerX,
+          cursorSimY: homeDef.centerY,
           isHost: false,
         };
         room.players.set(playerId, { id: playerId, ws, presence });
@@ -182,7 +190,11 @@ async function startServer() {
           world: room.world,
         });
         broadcastRoom(room, { type: 'players', players: getPlayersList(room) });
-        broadcastRoom(room, { type: 'toast', message: `${presence.name} joined the sky-realm!`, ok: true });
+        broadcastRoom(room, {
+          type: 'toast',
+          message: `${presence.name} claimed ${homeDef.name} in the sky-realm!`,
+          ok: true,
+        });
         return;
       }
 
@@ -203,7 +215,7 @@ async function startServer() {
       }
 
       if (parsed.type === 'command') {
-        const res = applyWorldCommand(activeRoom.world, parsed.cmd, activeRoom.particles);
+        const res = applyWorldCommand(activeRoom.world, parsed.cmd, activeRoom.particles, playerId);
         sendMsg(ws, { type: 'toast', message: res.message, ok: res.ok });
         broadcastRoom(activeRoom, {
           type: 'world_state',

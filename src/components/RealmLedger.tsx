@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import {
   Anchor,
+  ArrowRightLeft,
   Check,
   Flame,
+  GitBranch,
   Hammer,
   Lightbulb,
   Lock,
   MapPin,
+  Package,
   Shield,
   Skull,
   Sparkles,
@@ -18,6 +21,7 @@ import {
   ERA_LABELS,
   ISLAND_DEFS,
   ISLAND_ORDER,
+  TRAITS,
   getUpgradeCost,
 } from '../game/catalog';
 import {
@@ -31,8 +35,10 @@ import {
   VILLAGE_CUSTOM_META,
   getAvailableFrontierTechs,
   getBlueprintsList,
+  getTechModifiers,
 } from '../game/techAndCultures';
 import type {
+  BorderPolicy,
   BuildingType,
   CropType,
   CultureId,
@@ -40,6 +46,7 @@ import type {
   HudSnapshot,
   IslandId,
   LivestockKind,
+  RationMode,
   TechBranch,
   VillageResources,
 } from '../game/types';
@@ -60,14 +67,22 @@ interface RealmLedgerProps {
   onSuggestTech: (techId: string) => void;
   onSuggestDiplomacy: (cultureId: CultureId, action: 'envoy' | 'gift') => void;
   onAdjustDiplomacy?: (cultureId: CultureId, delta: number) => void;
+  onSetVillagePolicy?: (islandId: IslandId, rationMode?: RationMode, borderPolicy?: BorderPolicy) => void;
+  onSendCaravan?: (
+    fromIslandId: IslandId,
+    toIslandId: IslandId,
+    resource: keyof VillageResources,
+    amount: number,
+  ) => void;
   onCompleteBridge?: (bridgeId: string) => void;
+  onCompleteCableway?: (cableId: string) => void;
   onSpawnVillager?: (islandId: IslandId) => void;
   onUnlockAllTech?: () => void;
   onFocusIsland: (islandId: IslandId) => void;
   onClose: () => void;
 }
 
-type LedgerTab = 'structures' | 'tech' | 'islands' | 'diplomacy';
+type LedgerTab = 'structures' | 'resources' | 'tech' | 'islands' | 'diplomacy' | 'lineage';
 
 const BRANCH_ORDER: TechBranch[] = [
   'hearth_shelter',
@@ -76,12 +91,28 @@ const BRANCH_ORDER: TechBranch[] = [
   'metallurgy_war',
 ];
 
+const CARAVAN_RESOURCES: { id: keyof VillageResources; label: string }[] = [
+  { id: 'berries', label: 'Berries' },
+  { id: 'grain', label: 'Grain' },
+  { id: 'meat', label: 'Meat' },
+  { id: 'fish', label: 'Fish' },
+  { id: 'timber', label: 'Timber' },
+  { id: 'stone', label: 'Stone' },
+  { id: 'copper', label: 'Copper' },
+  { id: 'bronze', label: 'Bronze' },
+  { id: 'iron', label: 'Iron' },
+  { id: 'wool', label: 'Wool' },
+  { id: 'herbs', label: 'Herbs' },
+];
+
 function formatInlineCost(cost: Partial<VillageResources>): string {
   const parts: string[] = [];
   if (cost.timber) parts.push(`Timber ${cost.timber}`);
   if (cost.stone) parts.push(`Stone ${cost.stone}`);
   if (cost.copper) parts.push(`Copper ${cost.copper}`);
   if (cost.bronze) parts.push(`Bronze ${cost.bronze}`);
+  if (cost.iron) parts.push(`Iron ${cost.iron}`);
+  if (cost.wool) parts.push(`Wool ${cost.wool}`);
   if (cost.hides) parts.push(`Hides ${cost.hides}`);
   if (cost.grain) parts.push(`Grain ${cost.grain}`);
   if (cost.hearthlight) parts.push(`Hearth ${cost.hearthlight}`);
@@ -99,7 +130,10 @@ export function RealmLedger({
   onSuggestTech,
   onSuggestDiplomacy,
   onAdjustDiplomacy,
+  onSetVillagePolicy,
+  onSendCaravan,
   onCompleteBridge,
+  onCompleteCableway,
   onSpawnVillager,
   onUnlockAllTech,
   onFocusIsland,
@@ -108,16 +142,37 @@ export function RealmLedger({
   const [tab, setTab] = useState<LedgerTab>('structures');
   const [selectedCrop, setSelectedCrop] = useState<CropType>('wheat');
   const [selectedStock, setSelectedStock] = useState<LivestockKind>('sheep');
+  const homeId = hud.localHomeIslandId ?? 'cradle';
+  const [caravanDest, setCaravanDest] = useState<IslandId>(() =>
+    homeId === 'sunterrace' ? 'cradle' : 'sunterrace',
+  );
+  const [caravanResource, setCaravanResource] = useState<keyof VillageResources>('timber');
+  const [caravanAmount, setCaravanAmount] = useState<number>(10);
+  const [lineageOnlyHome, setLineageOnlyHome] = useState<boolean>(false);
 
   const isSovereign = gameMode === 'sovereign_sandbox';
   const unlockedSet = new Set(hud.unlockedTechIds);
   const frontierIds = new Set(getAvailableFrontierTechs(hud.unlockedTechIds).map((t) => t.id));
   const blueprints = getBlueprintsList();
+  const techMods = getTechModifiers(hud.unlockedTechIds);
+
+  const homeRes = hud.villageResources?.[homeId] ?? hud.resources;
+  const homeFlow = hud.resourceFlows?.[homeId] ?? {
+    foodIn: 0,
+    foodOut: 0,
+    timberIn: 0,
+    timberOut: 0,
+    stoneIn: 0,
+    stoneOut: 0,
+    oreIn: 0,
+    oreOut: 0,
+  };
+  const homePolicy = hud.villagePolicies?.[homeId] ?? { rationMode: 'normal', borderPolicy: 'parley' };
 
   return (
     <aside
       aria-label="Realm Ledger"
-      className="pointer-events-auto kingdom-frame fixed top-14 left-3.5 z-20 w-[456px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-11rem)] flex flex-col rounded p-3.5 text-[#F3EAD6] hud-panel"
+      className="pointer-events-auto kingdom-frame fixed top-14 left-3.5 z-20 w-[490px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-11rem)] flex flex-col rounded p-3.5 text-[#F3EAD6] hud-panel"
     >
       {/* Header */}
       <div className="flex items-center justify-between pb-2.5 border-b border-[#8E6B35]/45">
@@ -126,7 +181,7 @@ export function RealmLedger({
             Archipelago Realm Ledger
           </h2>
           <p className="text-[11px] text-[#B4A995] tabular-nums">
-            {ERA_LABELS[hud.era].name} · {hud.villagers.length} Hearthglen · {hud.clanVillagers.length} Native Clan · {hud.buildings.length} structures
+            {ERA_LABELS[hud.era].name} · {ISLAND_DEFS[homeId]?.name}: {hud.populationCount}/{hud.totalHousingBeds} beds · {hud.buildings.length} structures
           </p>
         </div>
         <button
@@ -139,21 +194,23 @@ export function RealmLedger({
         </button>
       </div>
 
-      {/* 4 Tabs */}
-      <div className="mt-2.5 grid grid-cols-4 gap-1 bg-[#141822] p-1 rounded border border-[#8E6B35]/35 text-[11px] font-medium">
+      {/* 6 Tabs */}
+      <div className="mt-2.5 grid grid-cols-6 gap-1 bg-[#141822] p-1 rounded border border-[#8E6B35]/35 text-[10.5px] font-medium">
         {(
           [
-            { id: 'structures', label: 'Structures' },
-            { id: 'tech', label: 'Tech Tree' },
-            { id: 'islands', label: 'Islands & Fleet' },
-            { id: 'diplomacy', label: 'Cultures & War' },
+            { id: 'structures', label: 'Build' },
+            { id: 'resources', label: 'Resources' },
+            { id: 'tech', label: 'Tech' },
+            { id: 'islands', label: 'Islands' },
+            { id: 'diplomacy', label: 'Cultures' },
+            { id: 'lineage', label: 'Lineage' },
           ] as const
         ).map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`py-1.5 px-1 rounded-sm transition-colors cursor-pointer whitespace-nowrap ${
+            className={`py-1.5 px-1 rounded-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
               tab === t.id
                 ? 'bg-[#D69635] text-[#14161D] font-semibold'
                 : 'text-[#C8BCA6] hover:text-[#F7EFDD] hover:bg-[#212836]'
@@ -172,12 +229,199 @@ export function RealmLedger({
 
       {/* Tab Body */}
       <div className="mt-2.5 flex-1 overflow-y-auto pr-1 space-y-2.5">
+        {tab === 'resources' && (
+          <div className="space-y-3 text-[11px]">
+            <div className="p-2.5 rounded-sm bg-[#1D2330] border border-[#8E6B35]/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-[#F7EFDD] flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5 text-[#E5AF47]" />
+                  <span>{ISLAND_DEFS[homeId]?.name} Storehouses</span>
+                </span>
+                <span className="text-[10.5px] text-[#8CE0AC] tabular-nums">
+                  Food: {Math.floor(homeRes.food)} (~{Math.max(0, Math.round(homeRes.food / Math.max(1, hud.populationCount * 1.5)))}d) · Beds: {hud.populationCount}/{hud.totalHousingBeds}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1.5 tabular-nums">
+                {[
+                  { label: 'Berries', val: homeRes.berries },
+                  { label: 'Grain', val: homeRes.grain },
+                  { label: 'Meat', val: homeRes.meat },
+                  { label: 'Fish', val: homeRes.fish },
+                ].map((item) => (
+                  <div key={item.label} className="p-1.5 rounded-sm bg-[#141822] border border-[#8E6B35]/25">
+                    <div className="text-[9.5px] text-[#B4A995]">{item.label}</div>
+                    <div className="text-[12px] font-semibold text-[#FDE68A]">{Math.floor(item.val)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-3 gap-1.5 tabular-nums">
+                {[
+                  { label: 'Timber', val: homeRes.timber },
+                  { label: 'Stone', val: homeRes.stone },
+                  { label: 'Copper Ore', val: homeRes.copper },
+                  { label: 'Bronze', val: homeRes.bronze },
+                  { label: 'Iron', val: homeRes.iron },
+                  { label: 'Wool', val: homeRes.wool },
+                  { label: 'Hides', val: homeRes.hides },
+                  { label: 'Herbs', val: homeRes.herbs },
+                  { label: 'Hearthlight', val: homeRes.hearthlight },
+                ].map((item) => (
+                  <div key={item.label} className="p-1.5 rounded-sm bg-[#141822] border border-[#8E6B35]/25 flex items-center justify-between">
+                    <span className="text-[10px] text-[#C8BCA6]">{item.label}</span>
+                    <span className="font-semibold text-[#F3EAD6]">{Math.floor(item.val)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Rolling Daily Flow */}
+            <div className="p-2.5 rounded-sm bg-[#171D29] border border-[#8E6B35]/35 space-y-1.5 tabular-nums">
+              <div className="font-semibold text-[#E5AF47]">Daily Production &amp; Upkeep Flow</div>
+              <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
+                {[
+                  { name: 'Food', inp: homeFlow.foodIn, out: homeFlow.foodOut },
+                  { name: 'Timber', inp: homeFlow.timberIn, out: homeFlow.timberOut },
+                  { name: 'Stone', inp: homeFlow.stoneIn, out: homeFlow.stoneOut },
+                  { name: 'Metals', inp: homeFlow.oreIn, out: homeFlow.oreOut },
+                ].map((row) => {
+                  const net = row.inp - row.out;
+                  return (
+                    <div key={row.name} className="p-1.5 rounded-sm bg-[#121721] border border-[#8E6B35]/25 flex items-center justify-between">
+                      <span className="text-[#D8CEBA]">{row.name}</span>
+                      <span>
+                        <span className="text-[#8CE0AC]">+{row.inp.toFixed(1)}</span>
+                        {' / '}
+                        <span className="text-[#E38589]">-{row.out.toFixed(1)}</span>
+                        {' '}
+                        <span className={net >= 0 ? 'text-[#8CE0AC] font-semibold' : 'text-[#E38589] font-semibold'}>
+                          ({net >= 0 ? `+${net.toFixed(1)}` : net.toFixed(1)})
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Ration & Border Policies */}
+            {onSetVillagePolicy && (
+              <div className="p-2.5 rounded-sm bg-[#1D2330] border border-[#8E6B35]/35 space-y-2">
+                <div>
+                  <div className="font-semibold text-[#F7EFDD] mb-1">Daily Ration Policy</div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(
+                      [
+                        { id: 'conserve', label: 'Conserve', tip: 'Half food cost, lower hunger recovery' },
+                        { id: 'normal', label: 'Normal', tip: 'Balanced daily meals' },
+                        { id: 'feast', label: 'Feast', tip: '1.5x food cost, higher mood & healing' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onSetVillagePolicy(homeId, opt.id, undefined)}
+                        title={opt.tip}
+                        className={`py-1 px-2 rounded-sm border text-[10.5px] font-semibold cursor-pointer whitespace-nowrap ${
+                          homePolicy.rationMode === opt.id
+                            ? 'bg-[#D69635] text-[#14161D] border-[#FDE68A]'
+                            : 'bg-[#141822] hover:bg-[#252D3D] text-[#D8CEBA] border-[#8E6B35]/35'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-semibold text-[#F7EFDD] mb-1">Perimeter &amp; Visitor Border Policy</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(
+                      [
+                        { id: 'closed', label: 'Closed' },
+                        { id: 'parley', label: 'Parley First' },
+                        { id: 'open_trade', label: 'Open Trade' },
+                        { id: 'allied', label: 'Allied' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onSetVillagePolicy(homeId, undefined, opt.id)}
+                        className={`py-1 px-1.5 rounded-sm border text-[10px] font-semibold cursor-pointer whitespace-nowrap ${
+                          homePolicy.borderPolicy === opt.id
+                            ? 'bg-[#4C8767] text-white border-[#8CE0AC]'
+                            : 'bg-[#141822] hover:bg-[#252D3D] text-[#D8CEBA] border-[#8E6B35]/35'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Supply Caravan Dispatcher */}
+            {onSendCaravan && (
+              <div className="p-2.5 rounded-sm bg-[#1D2330] border border-[#8E6B35]/35 space-y-2">
+                <div className="font-semibold text-[#E5AF47] flex items-center gap-1.5">
+                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                  <span>Dispatch Supply / Gift Caravan</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <select
+                    value={caravanDest}
+                    onChange={(e) => setCaravanDest(e.target.value as IslandId)}
+                    className="px-1.5 py-1 rounded-sm bg-[#141822] border border-[#8E6B35]/40 text-[#F3EAD6] text-[10.5px]"
+                  >
+                    {ISLAND_ORDER.filter((id) => id !== homeId).map((id) => (
+                      <option key={id} value={id}>
+                        To: {ISLAND_DEFS[id].name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={caravanResource}
+                    onChange={(e) => setCaravanResource(e.target.value as keyof VillageResources)}
+                    className="px-1.5 py-1 rounded-sm bg-[#141822] border border-[#8E6B35]/40 text-[#F3EAD6] text-[10.5px]"
+                  >
+                    {CARAVAN_RESOURCES.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.label} ({Math.floor(homeRes[r.id] ?? 0)})
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={caravanAmount}
+                    onChange={(e) => setCaravanAmount(Number(e.target.value))}
+                    className="px-1.5 py-1 rounded-sm bg-[#141822] border border-[#8E6B35]/40 text-[#F3EAD6] text-[10.5px]"
+                  >
+                    <option value={5}>5 units</option>
+                    <option value={10}>10 units</option>
+                    <option value={20}>20 units</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSendCaravan(homeId, caravanDest, caravanResource, caravanAmount)}
+                  className="w-full py-1.5 px-2.5 rounded-sm bg-[#D69635] hover:bg-[#E5A746] text-[#14161D] font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  Send Caravan (+8 Culture Trust)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === 'structures' && (
           <>
             {placingType && (
               <div className="p-2.5 rounded-sm bg-[#2B3548] border border-[#E5AF47] text-[11px] flex items-center justify-between gap-2">
                 <span className="text-[#FDE68A] font-medium">
-                  Click any island plateau in 3D to {isSovereign ? 'place' : 'stake a suggestion for'}{' '}
+                  Click within {ISLAND_DEFS[homeId]?.name} in 3D to {isSovereign ? 'place' : 'stake a suggestion for'}{' '}
                   <strong>{BUILDING_BLUEPRINTS[placingType].name}</strong>.
                 </span>
                 <button
@@ -192,8 +436,8 @@ export function RealmLedger({
 
             <p className="text-[11px] text-[#B4A995] leading-snug">
               {isSovereign
-                ? 'Sovereign Sandbox: place or upgrade any structure instantly on any island at zero resource cost.'
-                : 'Villagers discover blueprints on their own and choose where to build. You can stake a gentle placement suggestion on any explored island.'}
+                ? `Sovereign Sandbox: place or upgrade structures in your village (${ISLAND_DEFS[homeId]?.name}) immediately.`
+                : `Villagers in ${ISLAND_DEFS[homeId]?.name} prioritize food & shelter first on their own; you can stake gentle placement suggestions.`}
             </p>
 
             {/* Blueprints */}
@@ -326,7 +570,10 @@ export function RealmLedger({
                   const culture = CULTURES[b.cultureId];
                   const isSuggested = hud.suggestedBuildingId === b.id;
                   const upCost = getUpgradeCost(b);
-                  const canUp = b.level < b.maxLevel && (isSovereign || b.cultureId !== 'mist_mariner');
+                  const canUp =
+                    b.level < b.maxLevel &&
+                    (b.islandId === homeId || gameMode === 'shared_siege') &&
+                    (isSovereign || (b.cultureId !== 'mist_mariner' && b.cultureId !== 'ashen_raider'));
                   return (
                     <div
                       key={b.id}
@@ -335,7 +582,7 @@ export function RealmLedger({
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span
-                            className="w-2 h-2 rounded-full shrink-0"
+                            className="w-2 h-2 rounded-sm shrink-0"
                             style={{ backgroundColor: culture?.bannerColor ?? '#D69635' }}
                           />
                           <span className="font-semibold text-[#F3EAD6] truncate">
@@ -410,6 +657,19 @@ export function RealmLedger({
               </div>
             </div>
 
+            {/* Active Tech Bonus Summary */}
+            <div className="p-2 rounded-sm bg-[#171D29] border border-[#58A87A]/35 text-[10px] text-[#D8CEBA] grid grid-cols-3 gap-1.5 tabular-nums">
+              <span>Gather +{Math.round((techMods.gatherMult - 1) * 100)}%</span>
+              <span>Stone +{Math.round((techMods.stoneMult - 1) * 100)}%</span>
+              <span>Timber +{Math.round((techMods.timberMult - 1) * 100)}%</span>
+              <span>Attack +{Math.round((techMods.attackMult - 1) * 100)}%</span>
+              <span>Armor +{techMods.armorBonus}</span>
+              <span>Bleed Res +{Math.round(techMods.bleedResistBonus * 100)}%</span>
+              <span>Heal +{Math.round((techMods.healRateMult - 1) * 100)}%</span>
+              <span>Build +{Math.round((techMods.buildSpeedMult - 1) * 100)}%</span>
+              <span>Teach +{Math.round((techMods.teachRateMult - 1) * 100)}%</span>
+            </div>
+
             {BRANCH_ORDER.map((branch) => {
               const nodes = TECH_TREE.filter((t) => t.branch === branch);
               return (
@@ -450,6 +710,9 @@ export function RealmLedger({
                           </span>
                         </div>
                         <p className="text-[10.5px] text-[#C8BCA6] mt-0.5">{node.summary}</p>
+                        {node.effectSummary && (
+                          <p className="text-[10px] text-[#A8D8EA] mt-0.5 font-medium">{node.effectSummary}</p>
+                        )}
                         <div className="mt-1 flex items-center justify-between gap-2">
                           <span className="text-[10px] text-[#8CE0AC]">{node.unlocksLabel}</span>
                           {isFrontier && !isDone && (
@@ -487,6 +750,8 @@ export function RealmLedger({
                 const profile = hud.villageCultures[id];
                 const popHere = hud.villagers.filter((v) => v.islandId === id).length;
                 const nativeHere = hud.clanVillagers.filter((v) => v.islandId === id).length;
+                const ruinsHere = hud.exploreRuins.filter((r) => r.islandId === id);
+                const hasBridgeRoute = hud.bridges.some((b) => b.fromIsland === id || b.toIsland === id);
                 return (
                   <div
                     key={id}
@@ -500,13 +765,30 @@ export function RealmLedger({
                             style={{ backgroundColor: cult.bannerColor }}
                           />
                           <span>{def.name}</span>
+                          <span className="px-1.5 py-0.2 rounded-sm bg-[#141923] border border-[#8E6B35]/35 text-[9.5px] uppercase text-[#E5AF47]">
+                            {def.roleTag}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-sm text-[9.5px] border ${
+                              hasBridgeRoute
+                                ? 'bg-[#1D2B24] border-[#589674]/45 text-[#8CE0AC]'
+                                : 'bg-[#1E2534] border-[#6E8AB5]/40 text-[#A8D8EA]'
+                            }`}
+                          >
+                            {hasBridgeRoute ? 'Bridge Route' : 'Unbridged · Boat/Glider'}
+                          </span>
                           <span className="text-[10px] text-[#A8D8EA] font-normal">
                             {st?.discovered ? '(Charted)' : nativeHere > 0 ? '(Native Settlement)' : '(Awaiting Scouts)'}
                           </span>
                         </div>
                         <p className="text-[10.5px] text-[#B4A995] mt-0.5 tabular-nums">
-                          {def.subtitle} · {popHere} Hearthglen{nativeHere > 0 ? ` · ${nativeHere} ${cult.name}` : ''}
+                          {def.subtitle} · {def.terrainStyle.replace('_', ' ')} · {popHere} Hearthglen{nativeHere > 0 ? ` · ${nativeHere} ${cult.name}` : ''}
                         </p>
+                        {ruinsHere.length > 0 && (
+                          <p className="text-[10px] text-[#FDE68A] mt-0.5">
+                            Ruin: {ruinsHere.map((r) => `${r.name} (${r.exploredCount > 0 ? `${r.exploredCount}x explored` : 'Unexplored'})`).join(', ')}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {isSovereign && onSpawnVillager && (
@@ -600,11 +882,45 @@ export function RealmLedger({
               })}
             </div>
 
-            {/* Fleet */}
+            {/* Sky-Cableways */}
+            <div className="pt-2 border-t border-[#8E6B35]/35 space-y-1.5">
+              <h3 className="text-[11.5px] font-semibold text-[#2DD4BF]">Cliff Sky-Cableways</h3>
+              {hud.cableways.map((cb) => {
+                const techReady = unlockedSet.has(cb.requiredTechId);
+                return (
+                  <div key={cb.id} className="p-2 rounded-sm bg-[#181E29] border border-[#2DD4BF]/30 text-[11px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-[#F3EAD6]">{cb.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-semibold tabular-nums ${cb.built ? 'text-[#2DD4BF]' : 'text-[#E5AF47]'}`}>
+                          {cb.built ? `Operating (${cb.passengerIds.length} aboard)` : techReady ? `Rigging ${Math.round(cb.progress * 100)}%` : `Needs ${TECH_BY_ID[cb.requiredTechId]?.name}`}
+                        </span>
+                        {isSovereign && !cb.built && onCompleteCableway && (
+                          <button
+                            type="button"
+                            onClick={() => onCompleteCableway(cb.id)}
+                            className="px-2 py-0.5 rounded-sm bg-[#2DD4BF] hover:bg-[#5EEAD4] text-[#0F172A] text-[10px] font-semibold cursor-pointer"
+                          >
+                            Complete Now
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {!cb.built && (
+                      <p className="text-[10px] text-[#B4A995] mt-0.5 tabular-nums">
+                        Requires Timber {cb.costTimber} · Stone {cb.costStone} · Iron {cb.costIron}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Fleet & Gliders */}
             <div className="pt-2 border-t border-[#8E6B35]/35 space-y-1.5">
               <h3 className="text-[11.5px] font-semibold text-[#E5AF47] flex items-center gap-1">
                 <Anchor className="w-3.5 h-3.5" />
-                <span>Archipelago Fleet ({hud.boats.length})</span>
+                <span>Archipelago Fleet ({hud.boats.length}) · Active Gliders ({hud.gliders.length})</span>
               </h3>
               {hud.boats.map((boat) => (
                 <div key={boat.id} className="p-2 rounded-sm bg-[#181E29] border border-[#8E6B35]/30 flex items-center justify-between text-[11px]">
@@ -617,6 +933,14 @@ export function RealmLedger({
                     </div>
                   </div>
                   <span className="text-[10px] text-[#8CE0AC] tabular-nums">{Math.round(boat.hp)}/{boat.maxHp} HP</span>
+                </div>
+              ))}
+              {hud.gliders.map((g) => (
+                <div key={g.id} className="p-2 rounded-sm bg-[#181E29] border border-[#E5AF47]/35 flex items-center justify-between text-[11px]">
+                  <span className="text-[#FDE68A]">
+                    Wind-Glider: {ISLAND_DEFS[g.fromIsland].name} → {ISLAND_DEFS[g.toIsland].name}
+                  </span>
+                  <span className="text-[10px] text-[#A8D8EA] tabular-nums">{Math.round(g.progress * 100)}%</span>
                 </div>
               ))}
             </div>
@@ -641,14 +965,14 @@ export function RealmLedger({
         {tab === 'diplomacy' && (
           <div className="space-y-3">
             <p className="text-[11px] text-[#B4A995] leading-snug">
-              Each settled island develops distinct customs around its nightly fires. Neighbor clans begin peaceful or wary—trust or war shifts through contact, trade gifts, envoys, or Sovereign decree.
+              Each settled island develops distinct customs around its nightly fires. Neighbor clans begin peaceful or wary—while the Ashen Bastion defends volcanic iron vaults by force.
             </p>
 
             {hud.raiders.length > 0 && (
               <div className="p-2.5 rounded-sm bg-[#3A1E24] border border-[#E38589] text-[11px] flex items-center gap-2 text-[#F7D7D9]">
                 <Swords className="w-4 h-4 text-[#E38589] shrink-0" />
                 <span>
-                  {hud.raiders.length} Mist-Mariner raider(s) currently ashore! Watchtowers & brave islanders are defending.
+                  {hud.raiders.length} active hostile warrior(s) across the archipelago (Ashen Bastion garrison & sea raiders).
                 </span>
               </div>
             )}
@@ -731,6 +1055,125 @@ export function RealmLedger({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {tab === 'lineage' && (
+          <div className="space-y-2.5 text-[11px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-[#E5AF47] flex items-center gap-1.5">
+                <GitBranch className="w-3.5 h-3.5" />
+                <span>Generational Family Tree</span>
+              </span>
+              <div className="flex items-center gap-1 bg-[#141822] p-0.5 rounded border border-[#8E6B35]/35 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setLineageOnlyHome(false)}
+                  className={`px-2 py-0.5 rounded-sm cursor-pointer ${
+                    !lineageOnlyHome ? 'bg-[#D69635] text-[#14161D] font-semibold' : 'text-[#C8BCA6]'
+                  }`}
+                >
+                  All Realm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLineageOnlyHome(true)}
+                  className={`px-2 py-0.5 rounded-sm cursor-pointer ${
+                    lineageOnlyHome ? 'bg-[#D69635] text-[#14161D] font-semibold' : 'text-[#C8BCA6]'
+                  }`}
+                >
+                  {ISLAND_DEFS[homeId]?.name}
+                </button>
+              </div>
+            </div>
+
+            {(() => {
+              const allRecords = Object.values(hud.lineage ?? {}).filter(
+                (r) => !lineageOnlyHome || r.homeIslandId === homeId,
+              );
+              if (allRecords.length === 0) {
+                return (
+                  <p className="text-[#B4A995] italic py-4 text-center">
+                    No family lineage records archived yet.
+                  </p>
+                );
+              }
+              const byGen = new Map<number, typeof allRecords>();
+              for (const rec of allRecords) {
+                const g = rec.generation ?? 1;
+                const list = byGen.get(g) ?? [];
+                list.push(rec);
+                byGen.set(g, list);
+              }
+              const gens = Array.from(byGen.keys()).sort((a, b) => a - b);
+
+              return gens.map((gen) => {
+                const members = byGen.get(gen) ?? [];
+                return (
+                  <div key={gen} className="space-y-1.5">
+                    <div className="text-[11px] font-semibold text-[#A8D8EA] border-b border-[#8E6B35]/30 pb-0.5 tabular-nums">
+                      Generation {gen} ({members.length})
+                    </div>
+                    {members.map((m) => {
+                      const pNames = m.parentIds
+                        ? m.parentIds
+                            .map((pid) => hud.lineage[pid]?.name.split(' ')[0] ?? 'Founder')
+                            .join(' & ')
+                        : null;
+                      const partnerName = m.partnerId ? hud.lineage[m.partnerId]?.name.split(' ')[0] : null;
+                      const childNames = m.childrenIds
+                        .map((cid) => hud.lineage[cid]?.name.split(' ')[0])
+                        .filter(Boolean);
+                      const traitLabels = m.traits
+                        .map((tid) => TRAITS[tid]?.name)
+                        .filter(Boolean)
+                        .slice(0, 3);
+
+                      const isAlive = m.deathDay === null;
+                      return (
+                        <div
+                          key={m.id}
+                          className={`p-2 rounded-sm border ${
+                            isAlive
+                              ? 'bg-[#1D2330] border-[#8E6B35]/35'
+                              : 'bg-[#151821] border-[#6E5156]/40 opacity-85'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-[#F7EFDD]">{m.name}</span>
+                            <span
+                              className={`text-[10px] font-semibold tabular-nums ${
+                                isAlive ? 'text-[#8CE0AC]' : 'text-[#E38589]'
+                              }`}
+                            >
+                              {isAlive
+                                ? `Living · ${m.lifeStage}`
+                                : `Passed D${m.deathDay ?? '?'} (${m.deathCause ?? 'old age'})`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-[#B4A995] mt-0.5">
+                            Home: {ISLAND_DEFS[m.homeIslandId]?.name} · Born D{m.birthDay}
+                            {pNames ? ` · Parents: ${pNames}` : ' · Origin: Founder / Traveler'}
+                          </div>
+                          {(partnerName || childNames.length > 0) && (
+                            <div className="text-[10px] text-[#DCE6F5] mt-0.5">
+                              {partnerName ? `Partner: ${partnerName}` : ''}
+                              {partnerName && childNames.length > 0 ? ' · ' : ''}
+                              {childNames.length > 0 ? `Children: ${childNames.join(', ')}` : ''}
+                            </div>
+                          )}
+                          {traitLabels.length > 0 && (
+                            <div className="text-[10px] text-[#E5AF47] mt-0.5">
+                              Inherited Traits: {traitLabels.join(' · ')}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })()}
           </div>
         )}
       </div>

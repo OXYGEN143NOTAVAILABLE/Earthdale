@@ -81,50 +81,55 @@ export const TECH_TREE: TechNode[] = [
     name: 'Spark & Hearth',
     branch: 'hearth_shelter',
     era: 1,
-    costXp: 14,
+    costXp: 12,
     prereqs: [],
     summary: 'Rubbing cedar kindling and flint sparks yields the village Bonfire—warding off night cold and sparking cultural lore.',
     unlocksLabel: 'Bonfire · Night Warmth',
+    effectSummary: '+20% Warmth recovery · Unlocks Bonfires & Nightly Fire Circles',
   },
   {
     id: 'woven_shelter',
     name: 'Woven Lean-Tos',
     branch: 'hearth_shelter',
     era: 1,
-    costXp: 24,
+    costXp: 22,
     prereqs: ['fire_making'],
     summary: 'Bent saplings, bark shingles, and hides shelter sleepers from rain and winter frost.',
     unlocksLabel: 'Lean-To Shelter · Dyed Tunics',
+    effectSummary: '+10% Build Speed · +5% Bleed Resistance (tunic padding)',
   },
   {
     id: 'timber_joinery',
     name: 'Timber Joinery',
     branch: 'hearth_shelter',
     era: 2,
-    costXp: 48,
+    costXp: 46,
     prereqs: ['woven_shelter'],
     summary: 'Mortise-and-tenon carpentry unlocks framed cottages and cedar woodshops.',
     unlocksLabel: 'Timber Cottage · Woodshop',
+    effectSummary: '+20% Timber Yield · +15% Build Speed',
   },
   {
     id: 'masonry_bakery',
     name: 'Masonry & Clay Ovens',
     branch: 'hearth_shelter',
     era: 2,
-    costXp: 76,
+    costXp: 72,
     prereqs: ['timber_joinery'],
     summary: 'Dressed quarry stone shapes lasting stone quarries and hearth ovens for warm bread.',
     unlocksLabel: 'Stone Quarry · Bakery',
+    effectSummary: '+25% Stone Yield · +15% Building Durability',
   },
   {
     id: 'scholarship',
     name: 'Scriptorium & Lore',
     branch: 'hearth_shelter',
     era: 3,
-    costXp: 115,
+    costXp: 110,
     prereqs: ['masonry_bakery'],
-    summary: 'Birch-bark folios preserve inventions, speeding every future cultural discovery.',
+    summary: 'Birch-bark folios preserve inventions, speeding every future cultural discovery and teaching.',
     unlocksLabel: 'Archipelago Library · +65% Knowledge',
+    effectSummary: '+35% Knowledge XP · +45% Skill Teaching Rate',
   },
 
   // Branch 2: Botany & Pastures
@@ -133,40 +138,44 @@ export const TECH_TREE: TechNode[] = [
     name: 'Seed Lore',
     branch: 'botany_pastures',
     era: 1,
-    costXp: 20,
+    costXp: 18,
     prereqs: ['fire_making'],
     summary: 'Saving wild turnip tubers and wild wheat ears beside watered loam.',
     unlocksLabel: 'Crop Plots (Turnips & Wheat)',
+    effectSummary: '+15% Forage Yield · Unlocks Cultivated Fields',
   },
   {
     id: 'animal_husbandry',
     name: 'Animal Husbandry',
     branch: 'botany_pastures',
     era: 2,
-    costXp: 54,
+    costXp: 52,
     prereqs: ['wild_botany'],
     summary: 'Split-rail pastures tame highland sheep, pigs, and fowl for wool, milk, and steady meat.',
     unlocksLabel: 'Pastures · Wool Winter Cloaks',
+    effectSummary: '+20% Crop & Pasture Yield · Unlocks Wool Winter Gear',
   },
   {
     id: 'flax_herbalism',
     name: 'Flax & Herbalism',
     branch: 'botany_pastures',
     era: 3,
-    costXp: 88,
+    costXp: 84,
     prereqs: ['animal_husbandry'],
-    summary: 'Cultivates blue flax fibers and healing chamomile herbs for sails, tunics, and recovery.',
+    summary: 'Cultivates blue flax fibers and healing chamomile herbs for sails, tunics, and wound salves.',
     unlocksLabel: 'Flax & Herb Crops · Faster Healing',
+    effectSummary: '+35% Natural Heal Rate · +15% Bleed Resistance (salves)',
   },
   {
     id: 'orchard_grafting',
     name: 'Orchard Grafting',
     branch: 'botany_pastures',
     era: 3,
-    costXp: 120,
+    costXp: 115,
     prereqs: ['flax_herbalism'],
-    summary: 'Apple & fruit orchard terraces flourish across Sun-Terrace Isle.',
+    summary: 'Apple & fruit orchard terraces flourish across fertile river valleys.',
     unlocksLabel: 'Orchard Terraces · Era IV Readiness',
+    effectSummary: '+25% Harvest & Orchard Yield · +10% Mood Drift',
   },
 
   // Branch 3: Maritime, Gliders & Bridges
@@ -175,60 +184,66 @@ export const TECH_TREE: TechNode[] = [
     name: 'Rope & Plank Spans',
     branch: 'maritime_bridges',
     era: 2,
-    costXp: 44,
+    costXp: 42,
     prereqs: ['woven_shelter'],
     summary: 'Woven hemp cables and cedar planks link neighboring floating cliffs.',
-    unlocksLabel: 'Sky-Bridges to Ridge, Terrace & Starbloom',
+    unlocksLabel: 'Sky-Bridges to Timbercrown, Terrace & Starbloom',
+    effectSummary: '+10% Move Speed · Unlocks Tier-1 Sky-Bridges',
   },
   {
     id: 'dugout_docks',
     name: 'Coastal Piers & Skiffs',
     branch: 'maritime_bridges',
     era: 2,
-    costXp: 68,
+    costXp: 64,
     prereqs: ['timber_joinery'],
-    summary: 'Stilted wooden piers launch agile Fishing Skiffs across coastal reefs.',
+    summary: 'Stilted wooden piers launch agile Fishing Skiffs to reach unbridged islands.',
     unlocksLabel: 'Island Docks · Fishing Skiffs',
+    effectSummary: '+25% Fish Catch · Unlocks Sea Transit to Unbridged Isles',
   },
   {
     id: 'wind_gliders',
     name: 'Canvas Wind-Gliders',
     branch: 'maritime_bridges',
     era: 2,
-    costXp: 78,
+    costXp: 76,
     prereqs: ['rope_bridges', 'timber_joinery'],
     summary: 'Bamboo frames and stretched flax wings let scouts ride cliff updrafts between floating islands.',
     unlocksLabel: 'Glider Launch Pad · Airborne Crossing',
+    effectSummary: '+20% Explorer Speed · Unlocks Wind-Glider Pads',
   },
   {
     id: 'sail_navigation',
     name: 'Lateen Sails & Trade',
     branch: 'maritime_bridges',
     era: 3,
-    costXp: 105,
+    costXp: 102,
     prereqs: ['dugout_docks', 'flax_herbalism'],
     summary: 'Woven flax sails carry heavy Merchant Cargo Ships and explorers to distant misty atolls.',
     unlocksLabel: 'Merchant Cargo Ships · Ocean Crossing',
+    effectSummary: '+25% Boat Speed · Unlocks Deep-Sea Cargo Voyages',
   },
   {
     id: 'cliff_cableways',
     name: 'Cliff Sky-Cableways',
     branch: 'maritime_bridges',
     era: 3,
-    costXp: 125,
+    costXp: 120,
     prereqs: ['wind_gliders', 'masonry_bakery'],
     summary: 'Tensioned iron-and-hemp cable lines hoist suspended gondolas up sheer alpine spires and volcanic fortresses.',
     unlocksLabel: 'Sky-Gondola Cableways to Frostpeak & Bastion',
+    effectSummary: 'Unlocks High-Cliff Gondola Cableways',
   },
   {
     id: 'sky_causeways',
     name: 'High-Arch Causeways',
     branch: 'maritime_bridges',
     era: 4,
-    costXp: 145,
+    costXp: 140,
     prereqs: ['rope_bridges', 'masonry_bakery'],
     summary: 'Stone-arched high bridges span dizzying chasms to Copper-Crag & Ashen Bastion.',
     unlocksLabel: 'High-Tier Stone Viaducts',
+    effectSummary: '+15% Build Speed · Unlocks Tier-2 Stone Viaducts',
   },
 
   // Branch 4: Metallurgy & Defense
@@ -237,40 +252,44 @@ export const TECH_TREE: TechNode[] = [
     name: 'Flint Spears & Hidecraft',
     branch: 'metallurgy_war',
     era: 1,
-    costXp: 28,
+    costXp: 26,
     prereqs: ['fire_making'],
     summary: 'Knapped flint spearheads enable real hunting of deer and wild boars for meat and hides.',
     unlocksLabel: 'Flint Spears · Big-Game Hunting',
+    effectSummary: '+20% Attack Power · +20% Stone Gathering',
   },
   {
     id: 'archery_watch',
     name: 'Yew Bows & Watchtowers',
     branch: 'metallurgy_war',
     era: 2,
-    costXp: 72,
+    costXp: 68,
     prereqs: ['flint_spears', 'timber_joinery'],
     summary: 'Curved bows and timber watchtowers guard coasts against wary neighbors or wild boars.',
     unlocksLabel: 'Hunting Bows · Watchtowers',
+    effectSummary: '+15% Attack Power · Unlocks Watchtowers & Bow Volley',
   },
   {
     id: 'bronze_smelting',
     name: 'Copper & Bronze Smelting',
     branch: 'metallurgy_war',
     era: 3,
-    costXp: 118,
+    costXp: 112,
     prereqs: ['archery_watch', 'masonry_bakery'],
     summary: 'Charcoal bellows smelt island copper into gleaming bronze tools, blades, and armor.',
     unlocksLabel: 'Smeltery · Bronze Gear & Blades',
+    effectSummary: '+25% Ore Yield · +2 Armor · +15% Attack Power',
   },
   {
     id: 'iron_statecraft',
     name: 'Iron Forging & Galleys',
     branch: 'metallurgy_war',
     era: 4,
-    costXp: 165,
+    costXp: 158,
     prereqs: ['bronze_smelting', 'sail_navigation'],
     summary: 'Forges iron-plated shields, Garrison Barracks, and armored Transport & War Galleys.',
     unlocksLabel: 'Barracks · War Galleys · Iron Armor',
+    effectSummary: '+4 Armor · +15% Bleed Resistance · +20% Attack Power',
   },
 ];
 
@@ -518,6 +537,47 @@ export function getAvailableFrontierTechs(unlocked: string[]): TechNode[] {
 
 export function getBlueprintsList(): BuildingBlueprint[] {
   return Object.values(BUILDING_BLUEPRINTS);
+}
+
+export interface TechModifiers {
+  gatherMult: number;
+  stoneMult: number;
+  timberMult: number;
+  oreMult: number;
+  cropMult: number;
+  fishMult: number;
+  healRateMult: number;
+  warmthRegenMult: number;
+  bleedResistBonus: number;
+  attackMult: number;
+  armorBonus: number;
+  buildSpeedMult: number;
+  teachRateMult: number;
+  knowledgeMult: number;
+  moveSpeedMult: number;
+  boatSpeedMult: number;
+}
+
+export function getTechModifiers(unlockedTechIds: string[]): TechModifiers {
+  const s = new Set(unlockedTechIds);
+  return {
+    gatherMult: 1 + (s.has('wild_botany') ? 0.15 : 0) + (s.has('orchard_grafting') ? 0.1 : 0),
+    stoneMult: 1 + (s.has('flint_spears') ? 0.2 : 0) + (s.has('masonry_bakery') ? 0.25 : 0),
+    timberMult: 1 + (s.has('timber_joinery') ? 0.2 : 0),
+    oreMult: 1 + (s.has('bronze_smelting') ? 0.25 : 0),
+    cropMult: 1 + (s.has('animal_husbandry') ? 0.2 : 0) + (s.has('orchard_grafting') ? 0.25 : 0),
+    fishMult: 1 + (s.has('dugout_docks') ? 0.25 : 0),
+    healRateMult: 1 + (s.has('flax_herbalism') ? 0.35 : 0),
+    warmthRegenMult: 1 + (s.has('fire_making') ? 0.2 : 0),
+    bleedResistBonus: (s.has('woven_shelter') ? 0.05 : 0) + (s.has('flax_herbalism') ? 0.15 : 0) + (s.has('iron_statecraft') ? 0.15 : 0),
+    attackMult: 1 + (s.has('flint_spears') ? 0.2 : 0) + (s.has('archery_watch') ? 0.15 : 0) + (s.has('bronze_smelting') ? 0.15 : 0) + (s.has('iron_statecraft') ? 0.2 : 0),
+    armorBonus: (s.has('bronze_smelting') ? 2 : 0) + (s.has('iron_statecraft') ? 4 : 0),
+    buildSpeedMult: 1 + (s.has('woven_shelter') ? 0.1 : 0) + (s.has('timber_joinery') ? 0.15 : 0) + (s.has('sky_causeways') ? 0.15 : 0),
+    teachRateMult: 1 + (s.has('scholarship') ? 0.45 : 0),
+    knowledgeMult: 1 + (s.has('scholarship') ? 0.35 : 0),
+    moveSpeedMult: 1 + (s.has('rope_bridges') ? 0.1 : 0) + (s.has('wind_gliders') ? 0.1 : 0),
+    boatSpeedMult: 1 + (s.has('sail_navigation') ? 0.25 : 0),
+  };
 }
 
 export interface VillageCustomMeta {

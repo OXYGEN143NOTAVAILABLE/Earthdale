@@ -2,20 +2,26 @@ import { Compass, RotateCcw, X } from 'lucide-react';
 import { ISLAND_DEFS, ISLAND_ORDER, WORLD_HEIGHT, WORLD_WIDTH } from '../game/catalog';
 import { CULTURES } from '../game/techAndCultures';
 import type {
+  AirGliderEntity,
   BoatEntity,
   BuildingEntity,
   CameraState,
+  ExploreRuinEntity,
   IslandId,
   IslandState,
   MemorialStone,
   RoomPlayerPresence,
   SkyBridgeEntity,
+  SkyCablewayEntity,
   VillagerEntity,
 } from '../game/types';
 
 interface ValleyMapDrawerProps {
   islands: Record<IslandId, IslandState>;
   bridges: SkyBridgeEntity[];
+  cableways: SkyCablewayEntity[];
+  gliders: AirGliderEntity[];
+  exploreRuins: ExploreRuinEntity[];
   buildings: BuildingEntity[];
   villagers: VillagerEntity[];
   clanVillagers: VillagerEntity[];
@@ -37,11 +43,17 @@ const BIOME_FILL: Record<string, string> = {
   terrace: '#657F47',
   crag: '#5C554D',
   mist_atoll: '#3B6F74',
+  ruins: '#45785B',
+  volcanic: '#4A2B28',
+  frost: '#7E9FB6',
 };
 
 export function ValleyMapDrawer({
   islands,
   bridges,
+  cableways,
+  gliders,
+  exploreRuins,
   buildings,
   villagers,
   clanVillagers,
@@ -103,7 +115,7 @@ export function ValleyMapDrawer({
           onClick={handleSvgClick}
           className="block w-full h-auto cursor-crosshair select-none"
           role="img"
-          aria-label="Interactive chart of the five floating islands and sky-sea"
+          aria-label="Interactive chart of the eight floating islands and sky-sea"
         >
           {/* Sky-Sea Backdrop */}
           <rect width={WORLD_WIDTH} height={WORLD_HEIGHT} fill="#152B3C" />
@@ -122,6 +134,28 @@ export function ValleyMapDrawer({
               strokeDasharray={br.built ? undefined : '24 16'}
             />
           ))}
+
+          {/* Sky-Cableways */}
+          {cableways.map((cb) => {
+            const gx = cb.x1 + (cb.x2 - cb.x1) * cb.gondolaT;
+            const gy = cb.y1 + (cb.y2 - cb.y1) * cb.gondolaT;
+            return (
+              <g key={cb.id}>
+                <line
+                  x1={cb.x1}
+                  y1={cb.y1}
+                  x2={cb.x2}
+                  y2={cb.y2}
+                  stroke={cb.built ? '#2DD4BF' : '#475569'}
+                  strokeWidth={cb.built ? 12 : 7}
+                  strokeDasharray="18 14"
+                />
+                {cb.built && (
+                  <circle cx={gx} cy={gy} r="20" fill="#2DD4BF" stroke="#FAF6EE" strokeWidth="5" />
+                )}
+              </g>
+            );
+          })}
 
           {/* Floating Islands (always crisp and visible to God) */}
           {ISLAND_ORDER.map((id) => {
@@ -143,6 +177,17 @@ export function ValleyMapDrawer({
               />
             );
           })}
+
+          {/* Ancient Exploration Ruins */}
+          {exploreRuins.map((r) => (
+            <polygon
+              key={r.id}
+              points={`${r.x},${r.y - 34} ${r.x + 28},${r.y} ${r.x},${r.y + 34} ${r.x - 28},${r.y}`}
+              fill={r.exploredCount > 0 ? '#FDE047' : '#A8D8EA'}
+              stroke="#14161D"
+              strokeWidth="5"
+            />
+          ))}
 
           {/* Buildings */}
           {buildings.map((b) => (
@@ -167,6 +212,17 @@ export function ValleyMapDrawer({
               fill={CULTURES[boat.cultureId]?.sailColor ?? '#FAF6EE'}
               stroke="#14161D"
               strokeWidth="4"
+            />
+          ))}
+
+          {/* Airborne Wind-Gliders */}
+          {gliders.map((g) => (
+            <polygon
+              key={g.id}
+              points={`${g.x},${g.y - 28} ${g.x + 32},${g.y + 14} ${g.x},${g.y + 4} ${g.x - 32},${g.y + 14}`}
+              fill={g.wingColor}
+              stroke="#E5AF47"
+              strokeWidth="6"
             />
           ))}
 

@@ -1,7 +1,36 @@
-import { Brain, Check, Coffee, Compass, Crown, Heart, MapPin, MessageCircle, Shield, Sparkles, Utensils, Users, X, Zap } from 'lucide-react';
-import { CHIEF_FOCUSES, COGNITIVE_STAGE_META, COMFORT_LABELS, CONCEPT_LABELS, ISLAND_DEFS, TASKS, TRAITS, WISH_LABELS } from '../game/catalog';
+import {
+  Anchor,
+  Brain,
+  Check,
+  Coffee,
+  Compass,
+  Crown,
+  Droplets,
+  Heart,
+  MapPin,
+  MessageCircle,
+  Shield,
+  Sparkles,
+  Swords,
+  Utensils,
+  Users,
+  X,
+  Zap,
+} from 'lucide-react';
+import {
+  CHIEF_FOCUSES,
+  COGNITIVE_STAGE_META,
+  COMFORT_LABELS,
+  CONCEPT_LABELS,
+  ISLAND_DEFS,
+  SKILL_META,
+  TASKS,
+  TRAITS,
+  WISH_LABELS,
+  getSocialTier,
+} from '../game/catalog';
 import { CULTURES } from '../game/techAndCultures';
-import type { ChiefFocus, GameMode, GodCommentKind, TaskType, VillagerEntity } from '../game/types';
+import type { ChiefFocus, GameMode, GodCommentKind, SkillId, TaskType, VillagerEntity } from '../game/types';
 import { ComfortSvg } from './StorybookIcons';
 import { VillagerPortrait } from './VillagerPortrait';
 
@@ -9,12 +38,16 @@ interface NpcInspectorProps {
   villager: VillagerEntity;
   allVillagers: VillagerEntity[];
   gameMode: GameMode;
+  canControl: boolean;
   chiefFocus: ChiefFocus;
   taskAvailability: Record<TaskType, boolean>;
   statusFeedback: string | null;
   isMovingCommand?: boolean;
   onToggleMoveCommand?: () => void;
   onUpliftVillager?: () => void;
+  onToggleDraft?: () => void;
+  onHoldPosition?: () => void;
+  onClearRtsOrder?: () => void;
   onClose: () => void;
   onChat: () => void;
   onComment: (kind: GodCommentKind) => void;
@@ -50,12 +83,16 @@ export function NpcInspector({
   villager,
   allVillagers,
   gameMode,
+  canControl,
   chiefFocus,
   taskAvailability,
   statusFeedback,
   isMovingCommand,
   onToggleMoveCommand,
   onUpliftVillager,
+  onToggleDraft,
+  onHoldPosition,
+  onClearRtsOrder,
   onClose,
   onChat,
   onComment,
@@ -65,24 +102,43 @@ export function NpcInspector({
   onChangeChiefFocus,
 }: NpcInspectorProps) {
   const isSovereign = gameMode === 'sovereign_sandbox';
+  const isRtsMode = isSovereign || gameMode === 'shared_siege';
   const partner = villager.partnerId ? allVillagers.find((v) => v.id === villager.partnerId) : null;
   const children = villager.childrenIds
     .map((cid) => allVillagers.find((v) => v.id === cid)?.name.split(' ')[0])
     .filter(Boolean);
   const workReady =
-    (villager.lifeStage === 'adult' || villager.lifeStage === 'elder') &&
-    villager.cognition.awareness >= 45 &&
-    villager.cognition.observedConcepts.length >= 3 &&
-    villager.cognition.socialCount >= 2;
-  const canAssignRole = isSovereign || (workReady && !villager.isNativeClan);
+    isRtsMode ||
+    ((villager.lifeStage === 'adult' || villager.lifeStage === 'elder') &&
+      villager.cognition.awareness >= 30 &&
+      villager.cognition.observedConcepts.length >= 2 &&
+      villager.cognition.socialCount >= 1);
+  const canAssignRole = canControl && (isSovereign || (workReady && !villager.isNativeClan));
   const neighbors = allVillagers.filter((v) => v.id !== villager.id && v.lifeStage !== 'infant');
+  const homeIslandId = villager.homeIslandId ?? villager.islandId;
+  const isVisitingForeign = villager.islandId !== homeIslandId;
+  const visitStatusLabel =
+    villager.visitStatus === 'at_perimeter'
+      ? 'Waiting at Perimeter'
+      : villager.visitStatus === 'parleying'
+        ? 'Parleying at Gate'
+        : villager.visitStatus === 'denied'
+          ? 'Turned Away'
+          : villager.visitStatus === 'admitted'
+            ? 'Admitted Guest'
+            : null;
   const culture = CULTURES[villager.cultureId] ?? CULTURES.hearthfolk;
   const cogMeta = COGNITIVE_STAGE_META[villager.cognition.stage];
+  const stats = villager.stats;
+  const bleedStack = stats?.bleedStack ?? 0;
+  const skillEntries = (Object.entries(villager.skills ?? {}) as [SkillId, number][]).filter(
+    ([, lv]) => typeof lv === 'number' && lv > 0,
+  );
 
   return (
     <aside
       aria-label="Villager Inspector"
-      className="pointer-events-auto kingdom-frame fixed top-14 right-3.5 z-20 w-[308px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-10rem)] overflow-y-auto rounded p-3 text-[#F3EAD6] hud-panel"
+      className="pointer-events-auto kingdom-frame fixed top-14 right-3.5 z-20 w-[316px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-10rem)] overflow-y-auto rounded p-3 text-[#F3EAD6] hud-panel"
     >
       <div className="flex items-start justify-between gap-2 pb-2 border-b border-[#8E6B35]/40">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -111,8 +167,13 @@ export function NpcInspector({
             <p className="text-[10.5px] font-medium flex items-center gap-1" style={{ color: culture.bannerColor }}>
               <Shield className="w-3 h-3 shrink-0" />
               <span className="truncate">
-                {villager.isNativeClan ? `Native Clan (${culture.name})` : culture.name} · {GEAR_LABELS[villager.gearTier]}
+                {villager.isNativeClan ? `AI Village (${culture.name})` : culture.name} · Home: {ISLAND_DEFS[homeIslandId].name}
               </span>
+            </p>
+            <p className="text-[10px] text-[#9EB1C2] truncate">
+              {GEAR_LABELS[villager.gearTier]}
+              {isVisitingForeign && visitStatusLabel ? ` · ${visitStatusLabel}` : ''}
+              {!canControl ? ' · Autonomous / Rival' : ''}
             </p>
           </div>
         </div>
@@ -126,32 +187,96 @@ export function NpcInspector({
         </button>
       </div>
 
+      {bleedStack > 0 && (
+        <div className="mt-2 px-2.5 py-1 rounded-sm bg-[#461D22] border border-[#E38589] text-[11px] font-semibold text-[#FDE2E3] flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5">
+            <Droplets className="w-3.5 h-3.5 text-[#F87171]" />
+            <span>Bleeding ×{bleedStack}</span>
+          </span>
+          <span className="text-[10px] text-[#FCA5A5] tabular-nums">
+            {Math.ceil(stats.bleedTimer)}s · Needs fire/herbs
+          </span>
+        </div>
+      )}
+
       <blockquote className="mt-2 rounded-sm bg-[#1C2332] border border-[#8E6B35]/35 px-2.5 py-1.5 text-[11px] italic leading-snug text-[#ECE0C9]">
         “{villager.currentDialogue}”
       </blockquote>
 
-      {isSovereign && onToggleMoveCommand && onUpliftVillager && (
+      {isRtsMode && canControl && (
         <div className="mt-2 grid grid-cols-2 gap-1">
-          <button
-            type="button"
-            onClick={onToggleMoveCommand}
-            className={`py-1.5 px-2 rounded-sm text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer border ${
-              isMovingCommand
-                ? 'bg-[#D69635] text-[#14161D] border-[#FDE68A]'
-                : 'bg-[#232D40] hover:bg-[#2F3C54] text-[#FDE68A] border-[#E5AF47]/45'
-            }`}
-          >
-            <MapPin className="w-3 h-3 shrink-0" />
-            <span>{isMovingCommand ? 'Click Island...' : 'Move Here'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={onUpliftVillager}
-            className="py-1.5 px-2 rounded-sm bg-[#21332A] hover:bg-[#2C4539] text-[#A8DEC0] border border-[#589674]/45 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
-          >
-            <Zap className="w-3 h-3 shrink-0" />
-            <span>Uplift & Heal</span>
-          </button>
+          {onToggleMoveCommand && (
+            <button
+              type="button"
+              onClick={onToggleMoveCommand}
+              className={`py-1.5 px-2 rounded-sm text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer border ${
+                isMovingCommand
+                  ? 'bg-[#D69635] text-[#14161D] border-[#FDE68A]'
+                  : 'bg-[#232D40] hover:bg-[#2F3C54] text-[#FDE68A] border-[#E5AF47]/45'
+              }`}
+            >
+              <MapPin className="w-3 h-3 shrink-0" />
+              <span>{isMovingCommand ? 'Click Island...' : 'Move Here'}</span>
+            </button>
+          )}
+          {onHoldPosition && (
+            <button
+              type="button"
+              onClick={onHoldPosition}
+              className={`py-1.5 px-2 rounded-sm text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer border ${
+                villager.rtsOrder?.kind === 'hold'
+                  ? 'bg-[#2F3C54] text-[#FDE68A] border-[#E5AF47]'
+                  : 'bg-[#1D2432] hover:bg-[#283246] text-[#DCE6F5] border-[#6E8AB5]/45'
+              }`}
+            >
+              <Anchor className="w-3 h-3 shrink-0" />
+              <span>Hold Pos</span>
+            </button>
+          )}
+          {onToggleDraft && (
+            <button
+              type="button"
+              onClick={onToggleDraft}
+              className={`py-1.5 px-2 rounded-sm text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer border ${
+                villager.drafted
+                  ? 'bg-[#462328] hover:bg-[#5B2E34] text-[#FDE2E3] border-[#E38589]/65'
+                  : 'bg-[#252B39] hover:bg-[#31394C] text-[#F3EAD6] border-[#8E6B35]/45'
+              }`}
+            >
+              <Swords className="w-3 h-3 shrink-0 text-[#E5AF47]" />
+              <span>{villager.drafted ? 'Release Draft' : 'Draft Combat'}</span>
+            </button>
+          )}
+          {isSovereign && onUpliftVillager ? (
+            <button
+              type="button"
+              onClick={onUpliftVillager}
+              className="py-1.5 px-2 rounded-sm bg-[#21332A] hover:bg-[#2C4539] text-[#A8DEC0] border border-[#589674]/45 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
+            >
+              <Zap className="w-3 h-3 shrink-0" />
+              <span>Uplift &amp; Heal</span>
+            </button>
+          ) : (
+            onClearRtsOrder && (
+              <button
+                type="button"
+                onClick={onClearRtsOrder}
+                disabled={!villager.rtsOrder}
+                className="py-1.5 px-2 rounded-sm bg-[#1B212E] hover:bg-[#262E40] disabled:opacity-45 text-[#C8BCA6] border border-[#8E6B35]/35 text-[11px] font-semibold cursor-pointer"
+              >
+                Clear Order
+              </button>
+            )
+          )}
+          {isSovereign && villager.rtsOrder && onClearRtsOrder && (
+            <button
+              type="button"
+              onClick={onClearRtsOrder}
+              className="col-span-2 py-1 px-2 rounded-sm bg-[#1B212E] hover:bg-[#262E40] text-[#D8CEBA] border border-[#8E6B35]/35 text-[10.5px] font-medium cursor-pointer"
+            >
+              Clear Active RTS Order ({villager.rtsOrder.kind})
+            </button>
+          )}
         </div>
       )}
 
@@ -177,6 +302,60 @@ export function NpcInspector({
         </p>
       </div>
 
+      {/* Unit Stats & Bleed Resistance */}
+      {stats && (
+        <div className="mt-2 pt-2 border-t border-[#8E6B35]/35">
+          <div className="grid grid-cols-5 gap-1 text-center tabular-nums">
+            {[
+              { label: 'STR', value: stats.strength, color: 'text-[#F3A88B]' },
+              { label: 'AGI', value: stats.agility, color: 'text-[#8CE0AC]' },
+              { label: 'END', value: stats.endurance, color: 'text-[#FDE68A]' },
+              { label: 'INT', value: stats.intellect, color: 'text-[#A8D8EA]' },
+              { label: 'BLD RES', value: `${Math.round(stats.bleedResist * 100)}%`, color: 'text-[#DCE6F5]' },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="px-1 py-1 rounded-sm bg-[#1A202D] border border-[#8E6B35]/30"
+              >
+                <div className="text-[9px] text-[#9C907D]">{item.label}</div>
+                <div className={`text-[11px] font-semibold ${item.color}`}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Leveled Skills */}
+      <div className="mt-2 pt-2 border-t border-[#8E6B35]/35">
+        <div className="flex items-center justify-between text-[11px] mb-1">
+          <span className="font-semibold text-[#F3EAD6]">Learned Skills</span>
+          <span className="text-[10px] text-[#9C907D]">Taught &amp; practiced</span>
+        </div>
+        {skillEntries.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {skillEntries.map(([sk, lv]) => {
+              const meta = SKILL_META[sk];
+              if (!meta) return null;
+              return (
+                <span
+                  key={sk}
+                  title={meta.summary}
+                  className="px-1.5 py-0.5 rounded-sm bg-[#1B2331] border border-[#8E6B35]/40 text-[10px] text-[#F3EAD6] tabular-nums"
+                >
+                  {meta.label} <strong className="text-[#E5AF47]">Lv.{lv}</strong>
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-[10.5px] text-[#9C907D] italic">
+            {villager.lifeStage === 'infant'
+              ? 'Too young to train — watched over near hearth.'
+              : 'No formal skills yet — learns from daily tasks & elders.'}
+          </p>
+        )}
+      </div>
+
       {/* Cognition & World Awareness */}
       <div className="mt-2 pt-2 border-t border-[#8E6B35]/35 space-y-1.5">
         <div className="flex items-center justify-between text-[11px]">
@@ -195,7 +374,8 @@ export function NpcInspector({
         </div>
         <div className="flex items-center justify-between text-[10.5px] text-[#DCE6F5] tabular-nums">
           <span>
-            Wonders {Math.min(3, villager.cognition.observedConcepts.length)}/3 · Chats {Math.min(2, villager.cognition.socialCount)}/2
+            Wonders {Math.min(2, villager.cognition.observedConcepts.length)}/2 · Chats{' '}
+            {Math.min(1, villager.cognition.socialCount)}/1
           </span>
           <span className={workReady ? 'text-[#8CE0AC] font-semibold' : 'text-[#E5AF47]'}>
             {workReady ? 'Work Ready' : 'Learning'}
@@ -296,24 +476,30 @@ export function NpcInspector({
         </button>
       </div>
 
-      {/* Neighbors */}
+      {/* Neighbors & Social Tiers */}
       {villager.lifeStage !== 'infant' && neighbors.length > 0 && (
         <div className="mt-2.5 pt-2 border-t border-[#8E6B35]/35">
           <div className="flex items-center gap-1 text-[11px] font-semibold text-[#F3EAD6] mb-1">
             <Users className="w-3 h-3 text-[#B4A995]" />
-            <span>Visit Neighbor</span>
+            <span>Social Ties{canControl ? ' (Click to Visit)' : ''}</span>
           </div>
           <div className="flex flex-wrap gap-1">
             {neighbors.slice(0, 6).map((n) => {
-              const bond = Math.round(villager.relationships[n.id] ?? 20);
+              const bond = Math.round(villager.relationships[n.id] ?? 18);
+              const tier = getSocialTier(bond);
               return (
                 <button
                   key={n.id}
                   type="button"
-                  onClick={() => onHangOut(n.id)}
-                  className="px-2 py-0.5 rounded-sm bg-[#1D2330] hover:bg-[#283142] border border-[#8E6B35]/35 text-[10px] text-[#E5DAC4] cursor-pointer whitespace-nowrap tabular-nums"
+                  disabled={!canControl}
+                  onClick={() => canControl && onHangOut(n.id)}
+                  className={`px-2 py-0.5 rounded-sm bg-[#1D2330] border border-[#8E6B35]/35 text-[10px] text-[#E5DAC4] whitespace-nowrap tabular-nums ${
+                    canControl ? 'hover:bg-[#283142] cursor-pointer' : 'opacity-80 cursor-default'
+                  }`}
+                  title={`${n.name} (${ISLAND_DEFS[n.homeIslandId ?? n.islandId].name}) · ${tier.label} (${bond}%)`}
                 >
-                  {n.name.split(' ')[0]} · {bond}%
+                  {n.name.split(' ')[0]} ·{' '}
+                  <span style={{ color: tier.color }}>{tier.label}</span> ({bond}%)
                 </button>
               );
             })}
@@ -321,11 +507,11 @@ export function NpcInspector({
         </div>
       )}
 
-      {/* 12 Role Commands / Suggestions */}
+      {/* Role Commands / Suggestions */}
       {canAssignRole && (
         <div className="mt-2.5 pt-2 border-t border-[#8E6B35]/35">
           <div className="flex items-center justify-between text-[11px] mb-1.5">
-            <span className="font-semibold text-[#F3EAD6]">{isSovereign ? 'Command Role' : 'Suggest Role'}</span>
+            <span className="font-semibold text-[#F3EAD6]">{isRtsMode ? 'Command Role' : 'Suggest Role'}</span>
             <button
               type="button"
               onClick={() => onSuggestTask(null)}
@@ -333,7 +519,7 @@ export function NpcInspector({
                 villager.suggestedTask === null ? 'font-semibold text-[#E5AF47]' : 'text-[#B4A995]'
               }`}
             >
-              Free Will (A)
+              Free Will (X)
             </button>
           </div>
           <div className="grid grid-cols-2 gap-1">
@@ -362,7 +548,7 @@ export function NpcInspector({
         </div>
       )}
 
-      {!villager.isNativeClan && (canAssignRole || workReady) && (
+      {canControl && !villager.isNativeClan && (canAssignRole || workReady) && (
         <div className="mt-2.5 pt-2 border-t border-[#8E6B35]/35">
           {!villager.isChief ? (
             <button
@@ -371,7 +557,7 @@ export function NpcInspector({
               className="w-full py-1.5 px-2 rounded-sm bg-[#262E3D] hover:bg-[#313B4F] text-[#F3EAD6] border border-[#B68B44]/55 text-[11px] font-semibold cursor-pointer whitespace-nowrap flex items-center justify-center gap-1"
             >
               <Crown className="w-3 h-3 text-[#E5AF47]" />
-              <span>{isSovereign ? 'Crown as Chief' : 'Suggest as Chief'}</span>
+              <span>{isRtsMode ? 'Crown as Chief' : 'Suggest as Chief'}</span>
             </button>
           ) : (
             <div className="space-y-1">

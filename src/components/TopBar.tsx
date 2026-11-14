@@ -14,12 +14,14 @@ import {
   Snowflake,
   Sparkles,
   Sun,
+  Swords,
   Users,
   Volume2,
   VolumeX,
   Wind,
+  Wrench,
 } from 'lucide-react';
-import { SEASON_META, WEATHER_LABELS } from '../game/catalog';
+import { ISLAND_DEFS, SEASON_META, WEATHER_LABELS } from '../game/catalog';
 import { TECH_BY_ID } from '../game/techAndCultures';
 import type { HudSnapshot, RoomPlayerPresence, VillageEra, VillageTrajectory, WeatherType } from '../game/types';
 import { ResourceSvg, SeasonSvg } from './StorybookIcons';
@@ -29,9 +31,11 @@ interface TopBarProps {
   muted: boolean;
   simSpeed: 0 | 1 | 2 | 3;
   activeDrawer: 'ledger' | 'climate' | 'map' | null;
+  devToolsOpen?: boolean;
   mpRoomCode: string | null;
   mpPlayers: RoomPlayerPresence[];
   onToggleDrawer: (drawer: 'ledger' | 'climate' | 'map') => void;
+  onToggleDevTools?: () => void;
   onChangeSimSpeed: (speed: 0 | 1 | 2 | 3) => void;
   onToggleMute: () => void;
   onGrantResources: () => void;
@@ -76,9 +80,11 @@ export function TopBar({
   muted,
   simSpeed,
   activeDrawer,
+  devToolsOpen,
   mpRoomCode,
   mpPlayers,
   onToggleDrawer,
+  onToggleDevTools,
   onChangeSimSpeed,
   onToggleMute,
   onGrantResources,
@@ -107,9 +113,35 @@ export function TopBar({
           <span style={{ fontFamily: 'var(--font-display)' }}>Era {ERA_NUMERAL[era]}</span>
         </span>
 
-        <span className="text-[10.5px] font-semibold text-[#A8D8EA] whitespace-nowrap">
-          {gameMode === 'sovereign_sandbox' ? 'Sovereign' : 'Whispering'}
+        <span
+          className={`text-[10.5px] font-semibold whitespace-nowrap ${
+            gameMode === 'shared_siege' ? 'text-[#E38589]' : 'text-[#A8D8EA]'
+          }`}
+        >
+          {gameMode === 'sovereign_sandbox' ? 'Sovereign' : gameMode === 'shared_siege' ? 'Siege' : 'Whispering'}
         </span>
+
+        <span
+          className="text-[10.5px] font-semibold text-[#FDE68A] whitespace-nowrap"
+          title="Your assigned village (other islands act as autonomous AI or rival player villages)"
+        >
+          {ISLAND_DEFS[hud.localHomeIslandId]?.name ?? 'Cradle Isle'} ({hud.populationCount}/{hud.totalHousingBeds} beds)
+        </span>
+
+        {gameMode === 'shared_siege' && (
+          <span
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-[#3C1E24] border border-[#E38589]/55 text-[10.5px] font-semibold text-[#FDE2E3] whitespace-nowrap"
+            title={hud.siege.warningText ?? 'Shared Siege Multi-Front Wave Defense'}
+          >
+            <Swords className="w-3 h-3 text-[#E38589]" />
+            <span>
+              Wave {hud.siege.wave} · {hud.siege.totalKills} KO
+              {hud.siege.activeFronts.length > 0
+                ? ` · ${hud.siege.activeFronts.length} Fronts`
+                : ` · Next ${Math.max(0, Math.ceil(hud.siege.nextWaveTimer))}s`}
+            </span>
+          </span>
+        )}
 
         <span className={`font-semibold whitespace-nowrap ${traj.colorClass}`}>
           {traj.label} {prosperityScore}%
@@ -248,6 +280,21 @@ export function TopBar({
           >
             Sky
           </button>
+          {onToggleDevTools && (
+            <button
+              type="button"
+              onClick={onToggleDevTools}
+              className={`px-2 py-1 rounded-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1 ${
+                devToolsOpen
+                  ? 'bg-[#D69635] text-[#14161D] font-semibold'
+                  : 'hover:bg-[#252D3D] text-[#FDE68A]'
+              }`}
+              title="Developer Toolbox"
+            >
+              <Wrench className="w-3 h-3" />
+              <span>Dev</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onToggleMute}

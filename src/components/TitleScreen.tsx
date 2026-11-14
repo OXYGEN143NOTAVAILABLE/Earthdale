@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Crown, Eye, Users } from 'lucide-react';
+import { Crown, Eye, Swords, Users } from 'lucide-react';
 import type { GameMode } from '../game/types';
 
 interface TitleScreenProps {
@@ -174,14 +174,14 @@ export function TitleScreen({
           </svg>
 
           <p className="mt-1 max-w-xl text-xs sm:text-sm text-[#FAF6EE]/90 font-normal">
-            Five visible floating islands above a living sky-sea. Watch villagers awaken from childhood curiosity, bond around nightly fires to evolve unique cultures, or step in directly as an all-powerful Sovereign—solo or with friends.
+            Eight visible floating islands above a living sky-sea—settlements, jade ruins, alpine spires, and an ashen battle bastion. Watch villagers awaken from childhood curiosity, cross via bridges, boats, gliders &amp; cableways, or rule directly as Sovereign—solo or in co-op.
           </p>
         </div>
 
         {/* Mode & Session Panel */}
-        <div className="my-3 w-full max-w-xl kingdom-frame rounded-md p-4 text-left text-[#F3EAD6]">
+        <div className="my-3 w-full max-w-3xl kingdom-frame rounded-md p-4 text-left text-[#F3EAD6]">
           {/* Game Type Selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => onSelectMode('whisper_solo')}
@@ -196,7 +196,25 @@ export function TitleScreen({
                 <span>Whispering God</span>
               </div>
               <p className="mt-1 text-[11px] text-[#C8BCA6] leading-snug">
-                Suggestion-only chronicles. Villagers start bare-handed, explore & chat before work, and forge culture on their own.
+                Start with nothing &amp; whisper softly. Villagers awaken, gather stone &amp; food, and raise settlements on their own.
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectMode('shared_siege')}
+              className={`p-2.5 rounded-sm border text-left transition-colors cursor-pointer ${
+                selectedMode === 'shared_siege'
+                  ? 'bg-[#362229] border-[#E38589]'
+                  : 'bg-[#171C27]/85 border-[#8E6B35]/30 hover:bg-[#1E2534]'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#FDE2E3]">
+                <Swords className="w-3.5 h-3.5 text-[#E38589]" />
+                <span>Shared Siege Defense</span>
+              </div>
+              <p className="mt-1 text-[11px] text-[#C8BCA6] leading-snug">
+                Solo or Co-Op village defense under multi-front waves. Box-select &amp; right-click command units directly (RTS).
               </p>
             </button>
 
@@ -214,7 +232,7 @@ export function TitleScreen({
                 <span>Sovereign Sandbox</span>
               </div>
               <p className="mt-1 text-[11px] text-[#C8BCA6] leading-snug">
-                Full divine control: command any villager, instant structures & sky-bridges, shape weather, seasons, festivals & diplomacy.
+                Full RTS &amp; divine control: drag-select units, right-click orders, instant structures, weather, seasons &amp; diplomacy.
               </p>
             </button>
           </div>
@@ -255,7 +273,9 @@ export function TitleScreen({
                   onClick={onStart}
                   className="px-6 py-2.5 rounded-sm bg-[#D69635] hover:bg-[#E5A746] text-[#14161D] border border-[#FDE68A]/60 font-semibold text-sm shadow-lg transition-colors cursor-pointer whitespace-nowrap"
                 >
-                  {hasSavedVillage ? 'Continue Archipelago' : `Enter ${selectedMode === 'sovereign_sandbox' ? 'Sovereign Realm' : 'Archipelago'}`}
+                  {hasSavedVillage
+                    ? 'Continue Archipelago'
+                    : `Enter ${selectedMode === 'sovereign_sandbox' ? 'Sovereign Realm' : selectedMode === 'shared_siege' ? 'Siege Defense' : 'Archipelago'}`}
                 </button>
                 {hasSavedVillage && (
                   <button
@@ -263,7 +283,13 @@ export function TitleScreen({
                     onClick={() => onNewVillage(selectedMode)}
                     className="px-4 py-2.5 rounded-sm bg-[#1D2432] hover:bg-[#273144] text-[#F3EAD6] border border-[#8E6B35]/55 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
                   >
-                    New {selectedMode === 'sovereign_sandbox' ? 'Sovereign' : 'Whispering'} Realm
+                    New{' '}
+                    {selectedMode === 'sovereign_sandbox'
+                      ? 'Sovereign'
+                      : selectedMode === 'shared_siege'
+                        ? 'Siege'
+                        : 'Whispering'}{' '}
+                    Realm
                   </button>
                 )}
               </div>
@@ -309,7 +335,9 @@ export function TitleScreen({
                   onClick={() => onHostMultiplayer(playerName.trim() || 'Deity', playerColor, selectedMode)}
                   className="px-4 py-2 rounded-sm bg-[#D69635] hover:bg-[#E5A746] disabled:opacity-60 text-[#14161D] font-semibold cursor-pointer whitespace-nowrap"
                 >
-                  {mpConnecting ? 'Opening Realm...' : `Host ${selectedMode === 'sovereign_sandbox' ? 'Sovereign' : 'Whispering'} Room`}
+                  {mpConnecting
+                    ? 'Opening Realm...'
+                    : `Host ${selectedMode === 'sovereign_sandbox' ? 'Sovereign' : selectedMode === 'shared_siege' ? 'Siege Defense' : 'Whispering'} Room`}
                 </button>
 
                 <div className="flex-1 flex items-center gap-1.5">

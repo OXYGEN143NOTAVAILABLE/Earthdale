@@ -323,6 +323,25 @@ export function createWildNodeGroup(
       shard.scale.set(1.2, 0.72, 1.0);
       g.add(shard);
     }
+  } else if (node.kind === 'stone_boulder') {
+    const stoneMat = getFlatMaterial(0x7c786e, { roughness: 0.94 });
+    const stoneLight = getFlatMaterial(0x9a9488, { roughness: 0.9 });
+    const mossMat = getFlatMaterial(snow ? 0xd9e5ee : 0x56824b, { roughness: 0.88 });
+    const main = new THREE.Mesh(new THREE.DodecahedronGeometry(0.62, 0), stoneMat);
+    main.scale.set(1.25, 0.86, 1.05);
+    main.position.y = 0.42;
+    g.add(main);
+    const side = new THREE.Mesh(new THREE.DodecahedronGeometry(0.4, 0), stoneLight);
+    side.position.set(0.48, 0.24, 0.25);
+    g.add(side);
+    const chip = new THREE.Mesh(new THREE.DodecahedronGeometry(0.28, 0), stoneLight);
+    chip.position.set(-0.44, 0.18, -0.22);
+    g.add(chip);
+    const moss = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32, 0), mossMat);
+    moss.scale.set(1.1, 0.35, 0.95);
+    moss.position.set(-0.08, 0.82, 0.06);
+    g.add(moss);
+    if (node.scale) g.scale.setScalar(node.scale);
   } else if (node.kind === 'copper_vein' || node.kind === 'iron_vein') {
     const rockMat = getFlatMaterial(0x635d55, { roughness: 0.92 });
     const oreMat = getFlatMaterial(
@@ -1197,18 +1216,91 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
   const g = new THREE.Group();
   const isChild = v.lifeStage === 'child';
   const isInfant = v.lifeStage === 'infant';
-  const scale = isInfant ? 0.62 : isChild ? 0.8 : 1.0;
+  const scale = isInfant ? 0.66 : isChild ? 0.8 : 1.0;
+
+  const skinMat = getFlatMaterial(v.skinTone, { roughness: 0.74 });
+  const hairMat = getFlatMaterial(v.hairColor, { roughness: 0.84 });
+  const eyeMat = getFlatMaterial(0x1f242c, { roughness: 0.4 });
+  const swaddleMat = getFlatMaterial(v.cloakColor, { roughness: 0.85 });
 
   if (isInfant) {
-    const cradle = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.28, 0.42), getFlatMaterial(0x7c5438));
-    cradle.position.y = 0.14;
-    g.add(cradle);
-    const swaddle = new THREE.Mesh(new THREE.IcosahedronGeometry(0.22, 0), getFlatMaterial(v.cloakColor));
-    swaddle.position.y = 0.34;
-    g.add(swaddle);
-    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 0), getFlatMaterial(v.skinTone));
-    head.position.set(0.12, 0.48, 0);
-    g.add(head);
+    // Articulated crawling / sitting baby with animated head, arms & legs
+    const bodyWrap = new THREE.Group();
+    const torso = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), swaddleMat);
+    torso.scale.set(1.0, 0.88, 1.38);
+    torso.position.set(0, 0.28, -0.04);
+    bodyWrap.add(torso);
+
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, 0.44, 0.24);
+    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.21, 1), skinMat);
+    headGroup.add(head);
+    for (const ex of [-0.07, 0.07]) {
+      const eye = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.042, 0.036), eyeMat);
+      eye.position.set(ex, 0.01, 0.18);
+      headGroup.add(eye);
+    }
+    const tuft = new THREE.Mesh(new THREE.IcosahedronGeometry(0.11, 0), hairMat);
+    tuft.position.set(0, 0.18, 0.02);
+    headGroup.add(tuft);
+    bodyWrap.add(headGroup);
+    g.userData.headGroup = headGroup;
+
+    const armL = new THREE.Group();
+    armL.position.set(-0.18, 0.26, 0.14);
+    const armLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.046, 0.24, 5), skinMat);
+    armLMesh.position.y = -0.11;
+    armL.add(armLMesh);
+    bodyWrap.add(armL);
+    g.userData.armL = armL;
+
+    const armR = new THREE.Group();
+    armR.position.set(0.18, 0.26, 0.14);
+    const armRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.046, 0.24, 5), skinMat);
+    armRMesh.position.y = -0.11;
+    armR.add(armRMesh);
+    bodyWrap.add(armR);
+    g.userData.armR = armR;
+
+    const bootL = new THREE.Group();
+    bootL.position.set(-0.13, 0.2, -0.22);
+    const legLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.048, 0.22, 5), skinMat);
+    legLMesh.rotation.x = Math.PI * 0.35;
+    legLMesh.position.set(0, -0.06, -0.08);
+    bootL.add(legLMesh);
+    bodyWrap.add(bootL);
+    g.userData.bootL = bootL;
+
+    const bootR = new THREE.Group();
+    bootR.position.set(0.13, 0.2, -0.22);
+    const legRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.048, 0.22, 5), skinMat);
+    legRMesh.rotation.x = Math.PI * 0.35;
+    legRMesh.position.set(0, -0.06, -0.08);
+    bootR.add(legRMesh);
+    bodyWrap.add(bootR);
+    g.userData.bootR = bootR;
+
+    g.add(bodyWrap);
+    g.userData.bodyWrap = bodyWrap;
+    g.userData.isInfant = true;
+    g.scale.setScalar(scale);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.38, 0.5, 14),
+      new THREE.MeshBasicMaterial({
+        color: 0xf59e0b,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.9,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.04;
+    ring.visible = false;
+    ring.userData.ownMaterial = true;
+    g.add(ring);
+    g.userData.selectRing = ring;
+
     setShadows(g, true, true);
     return g;
   }
@@ -1221,10 +1313,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
     roughness: v.gearTier === 3 ? 0.45 : 0.82,
     metalness: v.gearTier === 3 ? 0.55 : 0.04,
   });
-  const skinMat = getFlatMaterial(v.skinTone, { roughness: 0.74 });
-  const hairMat = getFlatMaterial(v.hairColor, { roughness: 0.84 });
   const bootMat = getFlatMaterial(0x3e2d22, { roughness: 0.9 });
-  const eyeMat = getFlatMaterial(0x1f242c, { roughness: 0.4 });
   const armorMat = getFlatMaterial(0x8ea0b2, { roughness: 0.35, metalness: 0.75 });
   const woolMat = getFlatMaterial(0xf0eadc, { roughness: 0.88 });
 
@@ -1331,47 +1420,94 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
   bodyWrap.add(chiefBadge);
   g.userData.chiefBadge = chiefBadge;
 
-  // Visible Weapon Mesh based on v.weaponType
+  // Hand-socketed Weapon Mesh based on v.weaponType (attached directly to armR/armL hand!)
   if (v.weaponType !== 'none') {
     const weaponGroup = new THREE.Group();
-    weaponGroup.position.set(0.3, 0.56, 0.16);
-    if (v.weaponType === 'flint_spear') {
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 1.25, 5), bootMat);
-      shaft.position.y = 0.28;
-      weaponGroup.add(shaft);
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 4), getFlatMaterial(0x555d66));
-      tip.position.y = 0.96;
-      weaponGroup.add(tip);
-    } else if (v.weaponType === 'bow') {
+    if (v.weaponType === 'bow') {
+      // Bow held in left hand pointing forward
+      weaponGroup.position.set(-0.04, -0.35, 0.08);
+      weaponGroup.rotation.x = Math.PI * 0.45;
       const bowArc = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.028, 4, 8, Math.PI), bootMat);
       bowArc.rotation.z = -Math.PI / 2;
-      bowArc.position.set(0.05, 0.25, 0);
+      bowArc.position.set(0, 0.14, 0.08);
       weaponGroup.add(bowArc);
+      const string = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.72, 4), woolMat);
+      string.position.set(0, 0.14, -0.02);
+      weaponGroup.add(string);
+      armL.add(weaponGroup);
+    } else if (v.weaponType === 'flint_spear') {
+      weaponGroup.position.set(0.05, -0.35, 0.06);
+      weaponGroup.rotation.x = Math.PI * 0.46;
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 1.32, 5), bootMat);
+      shaft.position.y = 0.28;
+      weaponGroup.add(shaft);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 4), getFlatMaterial(0x6b7582));
+      tip.position.y = 1.0;
+      weaponGroup.add(tip);
+      armR.add(weaponGroup);
     } else {
-      const bladeColor = v.weaponType === 'bronze_blade' ? 0xd88c42 : 0xa5b4c4;
+      weaponGroup.position.set(0.05, -0.35, 0.06);
+      weaponGroup.rotation.x = Math.PI * 0.46;
+      const bladeColor = v.weaponType === 'bronze_blade' ? 0xd88c42 : 0xb3c2d1;
+      const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.2, 5), bootMat);
+      hilt.position.y = 0.02;
+      weaponGroup.add(hilt);
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.06), armorMat);
+      guard.position.y = 0.12;
+      weaponGroup.add(guard);
       const blade = new THREE.Mesh(
-        new THREE.BoxGeometry(0.06, 0.65, 0.12),
+        new THREE.BoxGeometry(0.05, 0.62, 0.11),
         getFlatMaterial(bladeColor, { metalness: 0.78, roughness: 0.28 }),
       );
-      blade.position.y = 0.38;
+      blade.position.y = 0.44;
       weaponGroup.add(blade);
+      armR.add(weaponGroup);
     }
-    bodyWrap.add(weaponGroup);
     g.userData.weaponGroup = weaponGroup;
   }
 
-  // Construction hammer
+  // Hand-held Construction Hammer
   const hammerGroup = new THREE.Group();
-  hammerGroup.position.set(-0.28, 0.64, 0.18);
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.42, 5), bootMat);
+  hammerGroup.position.set(0.04, -0.36, 0.06);
+  hammerGroup.rotation.x = Math.PI * 0.48;
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.44, 5), bootMat);
   handle.position.y = 0.16;
   hammerGroup.add(handle);
-  const headHammer = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.26), armorMat);
+  const headHammer = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.26), armorMat);
   headHammer.position.y = 0.36;
   hammerGroup.add(headHammer);
   hammerGroup.visible = false;
-  bodyWrap.add(hammerGroup);
+  armR.add(hammerGroup);
   g.userData.hammerGroup = hammerGroup;
+
+  // Hand-held Woodcutter Axe
+  const axeGroup = new THREE.Group();
+  axeGroup.position.set(0.04, -0.36, 0.06);
+  axeGroup.rotation.x = Math.PI * 0.48;
+  const axeHaft = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.028, 0.56, 5), bootMat);
+  axeHaft.position.y = 0.22;
+  axeGroup.add(axeHaft);
+  const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.24), armorMat);
+  axeHead.position.set(0, 0.44, 0.08);
+  axeGroup.add(axeHead);
+  axeGroup.visible = false;
+  armR.add(axeGroup);
+  g.userData.axeGroup = axeGroup;
+
+  // Hand-held Stone Pickaxe
+  const pickaxeGroup = new THREE.Group();
+  pickaxeGroup.position.set(0.04, -0.36, 0.06);
+  pickaxeGroup.rotation.x = Math.PI * 0.48;
+  const pickHaft = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.028, 0.56, 5), bootMat);
+  pickHaft.position.y = 0.22;
+  pickaxeGroup.add(pickHaft);
+  const pickHead = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.38, 4), armorMat);
+  pickHead.rotation.x = Math.PI / 2;
+  pickHead.position.set(0, 0.46, 0.02);
+  pickaxeGroup.add(pickHead);
+  pickaxeGroup.visible = false;
+  armR.add(pickaxeGroup);
+  g.userData.pickaxeGroup = pickaxeGroup;
 
   // Rain hat
   const rainHat = new THREE.Mesh(new THREE.ConeGeometry(0.44, 0.24, 6), getFlatMaterial(0xd99b52));
@@ -1482,6 +1618,11 @@ export function createLivestockGroup(l: LivestockEntity): THREE.Group {
 
   g.add(bodyWrap);
   g.userData.bodyWrap = bodyWrap;
+  const baseScale = l.kind === 'fowl' ? 0.72 : l.kind === 'pig' ? 0.94 : 1.06;
+  g.scale.setScalar(baseScale * (l.scale ?? 1));
+  g.userData.entityKind = 'animal';
+  g.userData.animalKind = 'livestock';
+  g.userData.animalId = l.id;
   setShadows(g, true, false);
   return g;
 }
@@ -1553,6 +1694,11 @@ export function createWildHerdGroup(h: WildHerdEntity): THREE.Group {
 
   g.add(bodyWrap);
   g.userData.bodyWrap = bodyWrap;
+  const baseScale = h.kind === 'rabbit' ? 0.65 : h.kind === 'deer' ? 1.24 : 1.15;
+  g.scale.setScalar(baseScale * (h.scale ?? 1));
+  g.userData.entityKind = 'animal';
+  g.userData.animalKind = 'wild';
+  g.userData.animalId = h.id;
   setShadows(g, true, false);
   return g;
 }
@@ -1612,6 +1758,10 @@ export function createCatGroup(): THREE.Group {
   g.add(bodyWrap);
   g.userData.bodyWrap = bodyWrap;
   g.userData.tail = tail;
+  g.scale.setScalar(0.84);
+  g.userData.entityKind = 'animal';
+  g.userData.animalKind = 'cat';
+  g.userData.animalId = 'cat_hearth';
   setShadows(g, true, false);
   return g;
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimalInspector, type SelectedAnimalTarget } from './components/AnimalInspector';
 import { ArrivalPrompt } from './components/ArrivalPrompt';
 import { BottomControlDock } from './components/BottomControlDock';
 import { ClimateDrawer } from './components/ClimateDrawer';
+import { DevToolsDrawer, type DevActionPayload } from './components/DevToolsDrawer';
 import { NpcInspector } from './components/NpcInspector';
 import { PauseModal } from './components/PauseModal';
 import { RealmLedger } from './components/RealmLedger';
@@ -18,10 +20,12 @@ import {
   WORLD_WIDTH,
 } from './game/catalog';
 import { LowPolyDioramaRenderer } from './game/lowPolyRenderer';
+import { groundHeightAtSim } from './game/lowPolyWorld';
 import { MultiplayerClient } from './game/multiplayerClient';
 import {
   applyOfflineProgress,
   applyWorldCommand,
+  canControlVillager,
   clearWorldStorage,
   createHudSnapshot,
   createInitialWorld,
@@ -34,6 +38,7 @@ import {
 } from './game/simulation';
 import { BUILDING_BLUEPRINTS } from './game/techAndCultures';
 import type {
+  BorderPolicy,
   BuildingType,
   CameraState,
   ChiefFocus,
@@ -46,10 +51,13 @@ import type {
   HudSnapshot,
   IslandId,
   LivestockKind,
+  RationMode,
   RoomPlayerPresence,
+  RtsOrder,
   SeasonType,
   SettingsState,
   TaskType,
+  VillageResources,
   WeatherType,
   WorldCommand,
   WorldState,
@@ -71,6 +79,8 @@ export default function App() {
     x: ISLAND_DEFS.cradle.centerX,
     y: ISLAND_DEFS.cradle.centerY,
     zoom: 0.56,
+    yaw: -0.095,
+    pitch: 0.72,
     followVillagerId: null,
     focusIslandId: 'cradle',
   });
@@ -91,6 +101,34 @@ export default function App() {
     camStartX: 0,
     camStartY: 0,
   });
+  const orbitDragRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    button: number;
+    startX: number;
+    startY: number;
+    startYaw: number;
+    startPitch: number;
+  }>({
+    active: false,
+    moved: false,
+    button: 2,
+    startX: 0,
+    startY: 0,
+    startYaw: -0.095,
+    startPitch: 0.72,
+  });
+  const marqueeRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    startX: number;
+    startY: number;
+  }>({
+    active: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+  });
 
   const [phase, setPhase] = useState<GamePhase>('TITLE_MENU');
   const [hasSavedVillage, setHasSavedVillage] = useState<boolean>(Boolean(initialSaved));
@@ -100,6 +138,14 @@ export default function App() {
   const [selectedVillagerId, setSelectedVillagerId] = useState<string | null>(
     worldRef.current.villagers[0]?.id ?? null,
   );
+  const [selectedUnitIds, setSelectedUnitIds] = useState<Set<string>>(() =>
+    worldRef.current.villagers[0]?.id ? new Set([worldRef.current.villagers[0].id]) : new Set(),
+  );
+  const [selectedAnimal, setSelectedAnimal] = useState<SelectedAnimalTarget | null>(null);
+  const [marqueeBox, setMarqueeBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [boxSelectMode, setBoxSelectMode] = useState<boolean>(false);
+  const [devDrawerOpen, setDevDrawerOpen] = useState<boolean>(false);
+  const [debugShowCollisions, setDebugShowCollisions] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(false);
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
   const [activeDrawer, setActiveDrawer] = useState<'ledger' | 'climate' | 'map' | null>(null);
@@ -125,6 +171,8 @@ export default function App() {
       x: ISLAND_DEFS.cradle.centerX,
       y: ISLAND_DEFS.cradle.centerY,
       zoom: 0.56,
+      yaw: -0.095,
+      pitch: 0.72,
       followVillagerId: null,
       focusIslandId: 'cradle',
     },
@@ -139,14 +187,24 @@ export default function App() {
   phaseRef.current = phase;
   const selectedVillagerIdRef = useRef<string | null>(selectedVillagerId);
   selectedVillagerIdRef.current = selectedVillagerId;
+  const selectedUnitIdsRef = useRef<Set<string>>(selectedUnitIds);
+  selectedUnitIdsRef.current = selectedUnitIds;
+  const debugShowCollisionsRef = useRef<boolean>(debugShowCollisions);
+  debugShowCollisionsRef.current = debugShowCollisions;
   const mpRoomCodeRef = useRef<string | null>(mpRoomCode);
   mpRoomCodeRef.current = mpRoomCode;
   const mpPlayerIdRef = useRef<string | null>(mpPlayerId);
   mpPlayerIdRef.current = mpPlayerId;
   const mpPlayersRef = useRef<RoomPlayerPresence[]>(mpPlayers);
   mpPlayersRef.current = mpPlayers;
+  const pressedKeysRef = useRef<Set<string>>(new Set());
 
   const isInWorld = phase !== 'TITLE_MENU';
+
+  const getViewerHomeIsland = useCallback((): IslandId => {
+    const me = mpPlayersRef.current.find((p) => p.id === mpPlayerIdRef.current);
+    return me?.homeIslandId ?? worldRef.current.localHomeIslandId ?? 'cradle';
+  }, []);
 
   const syncCameraUi = useCallback(() => {
     const mount = canvasMountRef.current;
@@ -162,10 +220,10 @@ export default function App() {
   }, []);
 
   const syncHud = useCallback(() => {
-    setHud(createHudSnapshot(worldRef.current));
+    setHud(createHudSnapshot(worldRef.current, getViewerHomeIsland()));
     setSettings({ ...worldRef.current.settings });
     syncCameraUi();
-  }, [syncCameraUi]);
+  }, [getViewerHomeIsland, syncCameraUi]);
 
   const showTempBanner = useCallback((msg: string) => {
     setOfflineBanner(msg);
@@ -201,13 +259,16 @@ export default function App() {
     }
   }, [showTempBanner, syncHud]);
 
-  const resetCameraToCradle = useCallback(() => {
+  const resetCameraToIsland = useCallback((islandId: IslandId = 'cradle') => {
+    const def = ISLAND_DEFS[islandId] ?? ISLAND_DEFS.cradle;
     cameraRef.current = {
-      x: ISLAND_DEFS.cradle.centerX,
-      y: ISLAND_DEFS.cradle.centerY,
+      x: def.centerX,
+      y: def.centerY,
       zoom: 0.56,
+      yaw: -0.095,
+      pitch: 0.72,
       followVillagerId: null,
-      focusIslandId: 'cradle',
+      focusIslandId: islandId,
     };
     camGoalRef.current = null;
   }, []);
@@ -216,7 +277,10 @@ export default function App() {
     if (!hasSavedVillage && worldRef.current.gameMode !== selectedMode) {
       worldRef.current = createInitialWorld(selectedMode);
       particlesRef.current = createParticlePool();
-      setSelectedVillagerId(worldRef.current.villagers[0]?.id ?? null);
+      const firstId = worldRef.current.villagers[0]?.id ?? null;
+      setSelectedVillagerId(firstId);
+      setSelectedUnitIds(firstId ? new Set([firstId]) : new Set());
+      setSelectedAnimal(null);
       syncHud();
     } else {
       applyCatchUpIfNeeded();
@@ -235,10 +299,14 @@ export default function App() {
       const fresh = createInitialWorld(mode);
       worldRef.current = fresh;
       particlesRef.current = createParticlePool();
-      resetCameraToCradle();
+      resetCameraToIsland(fresh.localHomeIslandId ?? 'cradle');
       setSelectedMode(mode);
       setHasSavedVillage(false);
-      setSelectedVillagerId(fresh.villagers[0]?.id ?? null);
+      const firstId = fresh.villagers.find((v) => v.homeIslandId === (fresh.localHomeIslandId ?? 'cradle'))?.id ?? fresh.villagers[0]?.id ?? null;
+      setSelectedVillagerId(firstId);
+      setSelectedUnitIds(firstId ? new Set([firstId]) : new Set());
+      setSelectedAnimal(null);
+      setBoxSelectMode(false);
       setInspectorOpen(false);
       setActiveDrawer(null);
       setPlacingSuggestion(null);
@@ -250,7 +318,7 @@ export default function App() {
       setPhase('PLAYING');
       audioEngine.syncSettings(fresh.settings.muted, fresh.settings.volume, fresh.environment.weather);
     },
-    [resetCameraToCradle, syncHud],
+    [resetCameraToIsland, syncHud],
   );
 
   const ensureMpClient = useCallback(() => {
@@ -273,26 +341,36 @@ export default function App() {
         mpPlayerIdRef.current = playerId;
         mpPlayersRef.current = players;
 
+        const myHome = players.find((p) => p.id === playerId)?.homeIslandId ?? normalized.localHomeIslandId ?? 'cradle';
+        const firstOwned =
+          normalized.villagers.find((v) => canControlVillager(normalized, v, playerId)) ??
+          normalized.villagers[0] ??
+          null;
+
         setMpConnecting(false);
         setMpError(null);
         setMpRoomCode(roomCode);
         setMpPlayerId(playerId);
         setMpPlayers(players);
         setSelectedMode(normalized.gameMode);
-        setSelectedVillagerId(normalized.villagers[0]?.id ?? null);
+        setSelectedVillagerId(firstOwned?.id ?? null);
+        setSelectedUnitIds(firstOwned ? new Set([firstOwned.id]) : new Set());
+        setSelectedAnimal(null);
         setInspectorOpen(false);
         setActiveDrawer(null);
         setPlacingSuggestion(null);
         setMovingVillagerId(null);
-        resetCameraToCradle();
-        syncHud();
+        resetCameraToIsland(myHome);
+        setHud(createHudSnapshot(normalized, myHome));
+        setSettings({ ...normalized.settings });
+        syncCameraUi();
         setPhase('PLAYING');
         audioEngine.syncSettings(
           normalized.settings.muted,
           normalized.settings.volume,
           normalized.environment.weather,
         );
-        showTempBanner(`Connected to Co-Op Room ${roomCode}`);
+        showTempBanner(`Connected to Co-Op Room ${roomCode} — You guide ${ISLAND_DEFS[myHome]?.name ?? 'Cradle Isle'}`);
       },
       onWorldState: (world, players) => {
         const localSettings = worldRef.current.settings;
@@ -332,7 +410,7 @@ export default function App() {
     });
     mpClientRef.current = client;
     return client;
-  }, [resetCameraToCradle, showTempBanner, syncHud]);
+  }, [resetCameraToIsland, showTempBanner, syncCameraUi]);
 
   const handleHostMultiplayer = useCallback(
     (playerName: string, playerColor: string, mode: GameMode) => {
@@ -437,8 +515,29 @@ export default function App() {
         }
         wasBuildingRef.current = isBuildingNow;
 
-        // Exponential-damped camera follow & island focus glide
+        // Continuous WASD / Arrow camera-relative panning
         const cam = cameraRef.current;
+        const keys = pressedKeysRef.current;
+        if (keys.size > 0) {
+          const fwd = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
+          const right = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+          if (fwd !== 0 || right !== 0) {
+            cam.followVillagerId = null;
+            camGoalRef.current = null;
+            const len = Math.hypot(fwd, right) || 1;
+            const nf = fwd / len;
+            const nr = right / len;
+            const speedScale = (keys.has('shift') ? 2 : 1) * (360 / Math.max(0.12, Math.min(1.8, cam.zoom))) * Math.min(0.05, rawDt);
+            const sinY = Math.sin(cam.yaw);
+            const cosY = Math.cos(cam.yaw);
+            const dxSim = (-sinY * nf + cosY * nr) * speedScale;
+            const dySim = (-cosY * nf - sinY * nr) * speedScale;
+            cam.x = Math.max(260, Math.min(WORLD_WIDTH - 260, cam.x + dxSim));
+            cam.y = Math.max(200, Math.min(WORLD_HEIGHT - 200, cam.y + dySim));
+          }
+        }
+
+        // Exponential-damped camera follow & island focus glide
         if (cam.followVillagerId && !dragRef.current.active) {
           camGoalRef.current = null;
           const followed =
@@ -486,13 +585,15 @@ export default function App() {
           animClock,
           rawDt,
           peers,
+          selectedUnitIdsRef.current,
+          debugShowCollisionsRef.current,
         );
       }
 
       // Throttled HUD sync (~250ms)
       if (now - lastHudSync >= 250) {
         lastHudSync = now;
-        setHud(createHudSnapshot(world));
+        setHud(createHudSnapshot(world, getViewerHomeIsland()));
         syncCameraUi();
       }
     };
@@ -516,7 +617,7 @@ export default function App() {
       lowPoly.dispose();
       rendererRef.current = null;
     };
-  }, [isInWorld, applyCatchUpIfNeeded, syncCameraUi]);
+  }, [isInWorld, applyCatchUpIfNeeded, getViewerHomeIsland, syncCameraUi]);
 
   // Periodic auto-save every 5s + beforeunload (solo mode only)
   useEffect(() => {
@@ -539,7 +640,7 @@ export default function App() {
       cameraRef.current.followVillagerId = null;
       cameraRef.current.focusIslandId = target;
       if (target === 'all') {
-        camGoalRef.current = { x: WORLD_WIDTH * 0.5, y: WORLD_HEIGHT * 0.5, zoom: 0.13 };
+        camGoalRef.current = { x: WORLD_WIDTH * 0.5, y: WORLD_HEIGHT * 0.5, zoom: 0.1 };
       } else {
         const def = ISLAND_DEFS[target];
         camGoalRef.current = { x: def.centerX, y: def.centerY, zoom: 0.56 };
@@ -553,11 +654,28 @@ export default function App() {
   );
 
   const handleSelectVillager = useCallback(
-    (id: string, openDrawer = true) => {
-      setSelectedVillagerId(id);
+    (id: string, openDrawer = true, additive = false) => {
+      setSelectedAnimal(null);
       setMovingVillagerId(null);
+      if (additive) {
+        setSelectedUnitIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) {
+            next.delete(id);
+          } else {
+            next.add(id);
+          }
+          const primary = next.has(id) ? id : (Array.from(next)[0] ?? null);
+          setSelectedVillagerId(primary);
+          return next;
+        });
+      } else {
+        setSelectedVillagerId(id);
+        setSelectedUnitIds(new Set([id]));
+      }
       if (openDrawer) {
         setInspectorOpen(true);
+        setDevDrawerOpen(false);
         if (activeDrawer === 'climate') setActiveDrawer(null);
       }
       setStatusFeedback(null);
@@ -579,14 +697,17 @@ export default function App() {
     if (cameraRef.current.zoom < 0.55) {
       cameraRef.current.zoom = 0.72;
     }
+    setSelectedAnimal(null);
     setSelectedVillagerId(v.id);
+    setSelectedUnitIds(new Set([v.id]));
     setInspectorOpen(true);
   }, []);
 
   const handleCycleVillager = useCallback(
     (dir: 1 | -1) => {
       const world = worldRef.current;
-      const list = world.villagers.length > 0 ? world.villagers : world.clanVillagers;
+      const owned = world.villagers.filter((v) => canControlVillager(world, v, mpPlayerIdRef.current ?? undefined));
+      const list = owned.length > 0 ? owned : world.villagers.length > 0 ? world.villagers : world.clanVillagers;
       if (list.length === 0) return;
       const idx = list.findIndex((v) => v.id === selectedVillagerId);
       const nextIdx = idx === -1 ? 0 : (idx + dir + list.length) % list.length;
@@ -682,6 +803,101 @@ export default function App() {
     }
   }, [selectedVillagerId, dispatchCommand]);
 
+  const handleRtsOrderUnits = useCallback(
+    (villagerIds: string[], order: RtsOrder | null) => {
+      if (villagerIds.length === 0) return;
+      const res = dispatchCommand({ kind: 'rts_order_units', villagerIds, order });
+      if (!res.dispatchedRemote) {
+        audioEngine.playAssignChime(res.ok);
+        showTempBanner(res.message);
+        setStatusFeedback(res.message);
+      }
+    },
+    [dispatchCommand, showTempBanner],
+  );
+
+  const handleToggleDraft = useCallback(
+    (villagerIds: string[], drafted?: boolean) => {
+      if (villagerIds.length === 0) return;
+      const res = dispatchCommand({ kind: 'sovereign_draft_toggle', villagerIds, drafted });
+      if (!res.dispatchedRemote) {
+        audioEngine.playAssignChime(res.ok);
+        showTempBanner(res.message);
+        setStatusFeedback(res.message);
+      }
+    },
+    [dispatchCommand, showTempBanner],
+  );
+
+  const handleDevAction = useCallback(
+    (payload: DevActionPayload) => {
+      const res = dispatchCommand({ kind: 'dev_action', ...payload });
+      if (!res.dispatchedRemote) {
+        audioEngine.playAssignChime(res.ok);
+        showTempBanner(res.message);
+      }
+    },
+    [dispatchCommand, showTempBanner],
+  );
+
+  const handleRotateCamera = useCallback(
+    (deltaYaw: number) => {
+      cameraRef.current.yaw += deltaYaw;
+      syncCameraUi();
+    },
+    [syncCameraUi],
+  );
+
+  const handleResetCameraYaw = useCallback(() => {
+    cameraRef.current.yaw = -0.095;
+    cameraRef.current.pitch = 0.72;
+    syncCameraUi();
+  }, [syncCameraUi]);
+
+  const handleZoomCamera = useCallback(
+    (factor: number) => {
+      camGoalRef.current = null;
+      const nextZoom = Math.max(
+        0.06,
+        Math.min(3.2, Number((cameraRef.current.zoom * factor).toFixed(3))),
+      );
+      cameraRef.current.zoom = nextZoom;
+      if (nextZoom <= 0.25) {
+        cameraRef.current.focusIslandId = 'all';
+      }
+      syncCameraUi();
+    },
+    [syncCameraUi],
+  );
+
+  const handleSetVillagePolicy = useCallback(
+    (islandId: IslandId, rationMode?: RationMode, borderPolicy?: BorderPolicy) => {
+      const res = dispatchCommand({ kind: 'set_village_policy', islandId, rationMode, borderPolicy });
+      if (!res.dispatchedRemote) {
+        audioEngine.playAssignChime(res.ok);
+        setBuildFeedback(res.message);
+      }
+    },
+    [dispatchCommand],
+  );
+
+  const handleSendCaravan = useCallback(
+    (
+      fromIslandId: IslandId,
+      toIslandId: IslandId,
+      resource: keyof VillageResources,
+      amount: number,
+    ) => {
+      const res = dispatchCommand({ kind: 'send_caravan', fromIslandId, toIslandId, resource, amount });
+      if (!res.dispatchedRemote) {
+        audioEngine.playAssignChime(res.ok);
+        setBuildFeedback(res.message);
+        showTempBanner(res.message);
+      }
+    },
+    [dispatchCommand, showTempBanner],
+  );
+
   const handleStartPlaceSuggestion = useCallback(
     (buildingType: BuildingType, cropType?: CropType, livestockKind?: LivestockKind) => {
       setMovingVillagerId(null);
@@ -740,6 +956,18 @@ export default function App() {
   const handleCompleteBridge = useCallback(
     (bridgeId: string) => {
       const res = dispatchCommand({ kind: 'sovereign_build_bridge', bridgeId });
+      if (!res.dispatchedRemote) {
+        audioEngine.playBuildChime();
+        setBuildFeedback(res.message);
+        showTempBanner(res.message);
+      }
+    },
+    [dispatchCommand, showTempBanner],
+  );
+
+  const handleCompleteCableway = useCallback(
+    (cableId: string) => {
+      const res = dispatchCommand({ kind: 'sovereign_build_cableway', cableId });
       if (!res.dispatchedRemote) {
         audioEngine.playBuildChime();
         setBuildFeedback(res.message);
@@ -871,11 +1099,43 @@ export default function App() {
     [dispatchCommand, showTempBanner],
   );
 
-  // Viewport Drag Pan, Zoom & 3D Raycast Hit-Testing
+  // Viewport Drag Pan, Orbit Rotation, Marquee Box Select, RTS Right-Click & 3D Raycast Hit-Testing
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (phase !== 'PLAYING') return;
+      const mount = canvasMountRef.current;
+      if (!mount) return;
+      const rect = mount.getBoundingClientRect();
+
+      // Right-click or Middle-click: camera orbit (or RTS contextual order on short right-click)
+      if (e.button === 2 || e.button === 1) {
+        orbitDragRef.current = {
+          active: true,
+          moved: false,
+          button: e.button,
+          startX: e.clientX,
+          startY: e.clientY,
+          startYaw: cameraRef.current.yaw,
+          startPitch: cameraRef.current.pitch,
+        };
+        return;
+      }
+
       if (e.button !== 0) return;
+
+      const world = worldRef.current;
+      const isRtsMode = world.gameMode === 'sovereign_sandbox' || world.gameMode === 'shared_siege';
+      if (isRtsMode && !movingVillagerId && !placingSuggestion && (boxSelectMode || e.shiftKey)) {
+        marqueeRef.current = {
+          active: true,
+          moved: false,
+          startX: e.clientX - rect.left,
+          startY: e.clientY - rect.top,
+        };
+        setMarqueeBox(null);
+        return;
+      }
+
       dragRef.current = {
         active: true,
         moved: false,
@@ -885,7 +1145,7 @@ export default function App() {
         camStartY: cameraRef.current.y,
       };
     },
-    [phase],
+    [phase, boxSelectMode, movingVillagerId, placingSuggestion],
   );
 
   const handleCanvasMouseMove = useCallback(
@@ -895,6 +1155,36 @@ export default function App() {
       if (!mount || !renderer) return;
       const rect = mount.getBoundingClientRect();
 
+      if (orbitDragRef.current.active && phase === 'PLAYING') {
+        const dx = e.clientX - orbitDragRef.current.startX;
+        const dy = e.clientY - orbitDragRef.current.startY;
+        if (Math.hypot(dx, dy) > 4) {
+          orbitDragRef.current.moved = true;
+          cameraRef.current.yaw = orbitDragRef.current.startYaw - dx * 0.0065;
+          cameraRef.current.pitch = Math.max(
+            0.22,
+            Math.min(1.38, orbitDragRef.current.startPitch + dy * 0.0055),
+          );
+          syncCameraUi();
+        }
+        return;
+      }
+
+      if (marqueeRef.current.active && phase === 'PLAYING') {
+        const curX = e.clientX - rect.left;
+        const curY = e.clientY - rect.top;
+        if (Math.hypot(curX - marqueeRef.current.startX, curY - marqueeRef.current.startY) > 5) {
+          marqueeRef.current.moved = true;
+          setMarqueeBox({
+            x1: Math.min(marqueeRef.current.startX, curX),
+            y1: Math.min(marqueeRef.current.startY, curY),
+            x2: Math.max(marqueeRef.current.startX, curX),
+            y2: Math.max(marqueeRef.current.startY, curY),
+          });
+        }
+        return;
+      }
+
       if (dragRef.current.active && phase === 'PLAYING') {
         const dx = e.clientX - dragRef.current.startX;
         const dy = e.clientY - dragRef.current.startY;
@@ -903,13 +1193,18 @@ export default function App() {
           camGoalRef.current = null;
           cameraRef.current.followVillagerId = null;
           const { pxScale } = renderer.getCameraBounds(rect.width, rect.height, cameraRef.current);
+          const yaw = cameraRef.current.yaw;
+          const cosY = Math.cos(yaw);
+          const sinY = Math.sin(yaw);
+          const moveSimX = (-dx * cosY - dy * sinY) / pxScale;
+          const moveSimY = (dx * sinY - dy * cosY) / pxScale;
           cameraRef.current.x = Math.max(
             260,
-            Math.min(WORLD_WIDTH - 260, dragRef.current.camStartX - dx / pxScale),
+            Math.min(WORLD_WIDTH - 260, dragRef.current.camStartX + moveSimX),
           );
           cameraRef.current.y = Math.max(
             200,
-            Math.min(WORLD_HEIGHT - 200, dragRef.current.camStartY - dy / pxScale),
+            Math.min(WORLD_HEIGHT - 200, dragRef.current.camStartY + moveSimY),
           );
         }
         return;
@@ -934,23 +1229,154 @@ export default function App() {
 
         if (placingSuggestion || movingVillagerId) {
           mount.style.cursor = hit?.kind === 'island' ? 'crosshair' : 'not-allowed';
+        } else if (boxSelectMode) {
+          mount.style.cursor = 'crosshair';
         } else {
           mount.style.cursor = hit ? 'pointer' : 'grab';
         }
       }
     },
-    [phase, placingSuggestion, movingVillagerId],
+    [phase, placingSuggestion, movingVillagerId, boxSelectMode, syncCameraUi],
   );
 
   const handleCanvasMouseUp = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      const mount = canvasMountRef.current;
+      const renderer = rendererRef.current;
+
+      if (e.button === 2 || e.button === 1) {
+        const wasOrbitDragged = orbitDragRef.current.moved;
+        orbitDragRef.current.active = false;
+        if (wasOrbitDragged || e.button !== 2 || phase !== 'PLAYING' || !mount || !renderer) return;
+
+        if (movingVillagerId) {
+          setMovingVillagerId(null);
+          return;
+        }
+        if (placingSuggestion) {
+          setPlacingSuggestion(null);
+          return;
+        }
+
+        const world = worldRef.current;
+        const isRtsMode = world.gameMode === 'sovereign_sandbox' || world.gameMode === 'shared_siege';
+        const unitIds = Array.from(selectedUnitIdsRef.current).filter((id) => {
+          const v = world.villagers.find((item) => item.id === id);
+          return Boolean(v && canControlVillager(world, v, mpPlayerIdRef.current ?? undefined));
+        });
+        if (!isRtsMode || unitIds.length === 0) return;
+
+        const rect = mount.getBoundingClientRect();
+        const hit = renderer.hitTestWorld(
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          rect.width,
+          rect.height,
+        );
+        if (!hit) return;
+
+        const firstUnit = world.villagers.find((v) => v.id === unitIds[0]);
+        if (hit.kind === 'raider') {
+          const r = world.raiders.find((item) => item.id === hit.id);
+          handleRtsOrderUnits(unitIds, {
+            kind: 'attack',
+            targetId: hit.id,
+            islandId: r?.islandId ?? firstUnit?.islandId ?? 'cradle',
+            x: r?.x ?? firstUnit?.x ?? ISLAND_DEFS.cradle.centerX,
+            y: r?.y ?? firstUnit?.y ?? ISLAND_DEFS.cradle.centerY,
+          });
+        } else if (hit.kind === 'animal' && hit.animalKind === 'wild') {
+          const h = world.wildHerds.find((item) => item.id === hit.id);
+          if (h) {
+            handleRtsOrderUnits(unitIds, {
+              kind: 'attack',
+              targetId: h.id,
+              islandId: h.islandId,
+              x: h.x,
+              y: h.y,
+            });
+          }
+        } else if (hit.kind === 'wild_node') {
+          const n = world.wildNodes.find((item) => item.id === hit.id);
+          if (n) {
+            handleRtsOrderUnits(unitIds, {
+              kind: 'gather',
+              targetId: n.id,
+              islandId: n.islandId,
+              x: n.x,
+              y: n.y,
+            });
+          }
+        } else if (hit.kind === 'building') {
+          const b = world.buildings.find((item) => item.id === hit.id);
+          if (b) {
+            handleRtsOrderUnits(unitIds, {
+              kind: b.unlocked ? 'move' : 'build',
+              targetId: b.id,
+              islandId: b.islandId,
+              x: b.x,
+              y: b.y,
+            });
+          }
+        } else if (hit.kind === 'island') {
+          handleRtsOrderUnits(unitIds, {
+            kind: 'move',
+            islandId: hit.id,
+            x: hit.simX,
+            y: hit.simY,
+          });
+        }
+        return;
+      }
+
+      if (marqueeRef.current.active) {
+        const wasMarquee = marqueeRef.current.moved;
+        const startX = marqueeRef.current.startX;
+        const startY = marqueeRef.current.startY;
+        marqueeRef.current.active = false;
+        marqueeRef.current.moved = false;
+        setMarqueeBox(null);
+
+        if (wasMarquee && mount && renderer && phase === 'PLAYING') {
+          const rect = mount.getBoundingClientRect();
+          const curX = e.clientX - rect.left;
+          const curY = e.clientY - rect.top;
+          const minX = Math.min(startX, curX);
+          const maxX = Math.max(startX, curX);
+          const minY = Math.min(startY, curY);
+          const maxY = Math.max(startY, curY);
+
+          const captured: string[] = [];
+          for (const v of worldRef.current.villagers) {
+            if (v.lifeStage === 'infant') continue;
+            if (!canControlVillager(worldRef.current, v, mpPlayerIdRef.current ?? undefined)) continue;
+            const elev = groundHeightAtSim(v.x, v.y, worldRef.current.bridges);
+            const pt = renderer.projectSimToScreen(v.x, v.y, elev, rect.width, rect.height);
+            if (pt.visible && pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) {
+              captured.push(v.id);
+            }
+          }
+
+          if (captured.length > 0) {
+            setSelectedAnimal(null);
+            setSelectedUnitIds(new Set(captured));
+            setSelectedVillagerId(captured[0]);
+            setInspectorOpen(captured.length === 1);
+            if (captured.length > 1) {
+              showTempBanner(`Selected ${captured.length} units — Right-click to Move, Attack, Gather, or Build.`);
+            }
+          }
+          setBoxSelectMode(false);
+          return;
+        }
+        setBoxSelectMode(false);
+      }
+
       const wasDragged = dragRef.current.moved;
       dragRef.current.active = false;
       if (wasDragged) return;
 
       if (phase !== 'PLAYING') return;
-      const mount = canvasMountRef.current;
-      const renderer = rendererRef.current;
       if (!mount || !renderer) return;
       const rect = mount.getBoundingClientRect();
       const hit = renderer.hitTestWorld(
@@ -1010,15 +1436,22 @@ export default function App() {
 
       if (!hit) {
         setInspectorOpen(false);
+        setSelectedAnimal(null);
         return;
       }
-      if (hit.kind === 'villager') {
-        if (selectedVillagerId === hit.id && inspectorOpen) {
+      if (hit.kind === 'animal') {
+        setInspectorOpen(false);
+        setDevDrawerOpen(false);
+        setSelectedAnimal({ animalKind: hit.animalKind, id: hit.id });
+      } else if (hit.kind === 'villager') {
+        setSelectedAnimal(null);
+        if (!e.shiftKey && selectedVillagerId === hit.id && inspectorOpen && selectedUnitIds.size <= 1) {
           handleCommentSelected('praise');
         } else {
-          handleSelectVillager(hit.id, true);
+          handleSelectVillager(hit.id, true, e.shiftKey);
         }
       } else if (hit.kind === 'building') {
+        setSelectedAnimal(null);
         setActiveDrawer('ledger');
       }
     },
@@ -1027,10 +1460,12 @@ export default function App() {
       movingVillagerId,
       placingSuggestion,
       selectedVillagerId,
+      selectedUnitIds,
       inspectorOpen,
       dispatchCommand,
       handleCommentSelected,
       handleSelectVillager,
+      handleRtsOrderUnits,
       showTempBanner,
     ],
   );
@@ -1039,11 +1474,10 @@ export default function App() {
     (e: React.WheelEvent<HTMLDivElement>) => {
       if (phase !== 'PLAYING') return;
       camGoalRef.current = null;
-      const step = cameraRef.current.zoom < 0.4 ? 0.04 : 0.08;
-      const delta = e.deltaY > 0 ? -step : step;
+      const factor = e.deltaY > 0 ? 0.88 : 1.14;
       const nextZoom = Math.max(
-        0.11,
-        Math.min(1.55, Number((cameraRef.current.zoom + delta).toFixed(2))),
+        0.06,
+        Math.min(3.2, Number((cameraRef.current.zoom * factor).toFixed(3))),
       );
       cameraRef.current.zoom = nextZoom;
 
@@ -1079,14 +1513,33 @@ export default function App() {
   );
 
   const handleResetCamera = useCallback(() => {
-    handleFocusIsland('cradle');
-  }, [handleFocusIsland]);
+    handleFocusIsland(getViewerHomeIsland());
+  }, [getViewerHomeIsland, handleFocusIsland]);
 
-  // Keyboard Shortcuts
+  // Keyboard Shortcuts & Smooth WASD/Arrow Camera Panning
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      const lower = e.key.toLowerCase();
+      if (
+        phase === 'PLAYING' &&
+        (lower === 'w' ||
+          lower === 'a' ||
+          lower === 's' ||
+          lower === 'd' ||
+          lower === 'arrowup' ||
+          lower === 'arrowdown' ||
+          lower === 'arrowleft' ||
+          lower === 'arrowright' ||
+          lower === 'shift')
+      ) {
+        pressedKeysRef.current.add(lower);
+        if (lower.startsWith('arrow')) e.preventDefault();
+      }
+
+      if (tag === 'BUTTON') return;
 
       if (phase === 'TITLE_MENU') {
         if ((e.key === 'Enter' || e.key === ' ') && !mpConnecting) {
@@ -1102,11 +1555,16 @@ export default function App() {
           setMovingVillagerId(null);
         } else if (placingSuggestion) {
           setPlacingSuggestion(null);
+        } else if (boxSelectMode) {
+          setBoxSelectMode(false);
+          setMarqueeBox(null);
         } else if (phase === 'PAUSED') {
           setPhase('PLAYING');
-        } else if (activeDrawer || inspectorOpen) {
+        } else if (activeDrawer || inspectorOpen || selectedAnimal || devDrawerOpen) {
           setActiveDrawer(null);
           setInspectorOpen(false);
+          setSelectedAnimal(null);
+          setDevDrawerOpen(false);
         } else {
           setPhase('PAUSED');
         }
@@ -1115,7 +1573,7 @@ export default function App() {
 
       if (phase !== 'PLAYING') return;
 
-      const key = e.key.toLowerCase();
+      const key = lower;
       if (e.key === ' ') {
         e.preventDefault();
         handleChangeSimSpeed(worldRef.current.settings.simSpeed === 0 ? 1 : 0);
@@ -1130,12 +1588,24 @@ export default function App() {
       if (e.key === 'Tab') {
         e.preventDefault();
         handleCycleVillager(e.shiftKey ? -1 : 1);
-      } else if (e.key === 'ArrowRight') {
+      } else if (e.key === ']') {
         handleCycleVillager(1);
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.key === '[') {
         handleCycleVillager(-1);
+      } else if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        handleZoomCamera(1.18);
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        handleZoomCamera(0.84);
       } else if (e.key === 'Home' || e.key === '0') {
         handleResetCamera();
+      } else if (key === 'q') {
+        handleRotateCamera(-0.24);
+      } else if (key === 'e' && !e.shiftKey) {
+        handleRotateCamera(0.24);
+      } else if (key === 'e' && e.shiftKey) {
+        handleCommentSelected('encourage_explore');
       } else if (key === 'i') {
         setInspectorOpen((v) => !v);
       } else if (key === 'h') {
@@ -1144,11 +1614,9 @@ export default function App() {
         handleChatSelected();
       } else if (key === 'p') {
         handleCommentSelected('praise');
-      } else if (key === 'e') {
-        handleCommentSelected('encourage_explore');
       } else if (key === 'f') {
         handleCommentSelected('remind_eat');
-      } else if (key === 'a') {
+      } else if (key === 'x') {
         handleSuggestTask(null);
       } else if (key === 'b' || key === 'l') {
         setActiveDrawer((d) => (d === 'ledger' ? null : 'ledger'));
@@ -1167,17 +1635,27 @@ export default function App() {
       }
     };
 
+    const onKeyUp = (e: KeyboardEvent) => {
+      pressedKeysRef.current.delete(e.key.toLowerCase());
+    };
+
     const onBlur = () => {
+      pressedKeysRef.current.clear();
       dragRef.current.active = false;
+      orbitDragRef.current.active = false;
+      marqueeRef.current.active = false;
+      setMarqueeBox(null);
       if (!mpRoomCodeRef.current) {
         saveWorldToStorage(worldRef.current);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
   }, [
@@ -1185,6 +1663,9 @@ export default function App() {
     mpConnecting,
     activeDrawer,
     inspectorOpen,
+    selectedAnimal,
+    devDrawerOpen,
+    boxSelectMode,
     movingVillagerId,
     placingSuggestion,
     handleStartVillage,
@@ -1195,20 +1676,39 @@ export default function App() {
     handleCommentSelected,
     handleSuggestTask,
     handleResetCamera,
+    handleRotateCamera,
+    handleZoomCamera,
   ]);
+
+  const ownedVillagers = useMemo(
+    () =>
+      hud.villagers.filter((v) =>
+        canControlVillager(worldRef.current, v, mpPlayerId ?? undefined),
+      ),
+    [hud.villagers, mpPlayerId],
+  );
 
   const selectedVillager = useMemo(() => {
     const all = [...hud.villagers, ...hud.clanVillagers];
-    return all.find((v) => v.id === selectedVillagerId) ?? hud.villagers[0] ?? hud.clanVillagers[0] ?? null;
-  }, [hud.villagers, hud.clanVillagers, selectedVillagerId]);
+    return all.find((v) => v.id === selectedVillagerId) ?? ownedVillagers[0] ?? hud.villagers[0] ?? hud.clanVillagers[0] ?? null;
+  }, [hud.villagers, hud.clanVillagers, ownedVillagers, selectedVillagerId]);
+
+  const canControlSelected = useMemo(
+    () =>
+      Boolean(
+        selectedVillager &&
+          canControlVillager(worldRef.current, selectedVillager, mpPlayerId ?? undefined),
+      ),
+    [selectedVillager, mpPlayerId],
+  );
 
   const taskAvailability = useMemo(() => {
     const map = {} as Record<TaskType, boolean>;
     for (const t of TASKS) {
-      map[t.id] = getTaskAvailable(worldRef.current, t.id);
+      map[t.id] = getTaskAvailable(worldRef.current, t.id, hud.localHomeIslandId);
     }
     return map;
-  }, [hud.buildings, hud.unlockedTechIds]);
+  }, [hud.buildings, hud.unlockedTechIds, hud.localHomeIslandId]);
 
   const peerPresences = useMemo(
     () => mpPlayers.filter((p) => p.id !== mpPlayerId),
@@ -1240,16 +1740,33 @@ export default function App() {
       {/* Full-viewport 3D Low-Poly Archipelago mount */}
       <div
         ref={canvasMountRef}
+        onContextMenu={(e) => e.preventDefault()}
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleCanvasMouseMove}
         onMouseUp={handleCanvasMouseUp}
         onMouseLeave={() => {
           dragRef.current.active = false;
+          orbitDragRef.current.active = false;
+          marqueeRef.current.active = false;
+          setMarqueeBox(null);
           hoveredVillagerIdRef.current = null;
         }}
         onWheel={handleCanvasWheel}
         className="block w-full h-full cursor-grab active:cursor-grabbing"
       />
+
+      {/* RTS Marquee Selection Overlay */}
+      {marqueeBox && (
+        <div
+          className="pointer-events-none fixed z-30 border border-[#FDE68A] bg-[#D69635]/20"
+          style={{
+            left: marqueeBox.x1,
+            top: marqueeBox.y1,
+            width: Math.max(1, marqueeBox.x2 - marqueeBox.x1),
+            height: Math.max(1, marqueeBox.y2 - marqueeBox.y1),
+          }}
+        />
+      )}
 
       {/* Non-occluding Game HUD overlay */}
       <div className="pointer-events-none fixed inset-0 z-20">
@@ -1258,12 +1775,23 @@ export default function App() {
           muted={settings.muted}
           simSpeed={settings.simSpeed}
           activeDrawer={activeDrawer}
+          devToolsOpen={devDrawerOpen}
           mpRoomCode={mpRoomCode}
           mpPlayers={mpPlayers}
           onToggleDrawer={(drawer) => {
             setActiveDrawer((curr) => {
               const next = curr === drawer ? null : drawer;
               if (next === 'climate') setInspectorOpen(false);
+              return next;
+            });
+          }}
+          onToggleDevTools={() => {
+            setDevDrawerOpen((open) => {
+              const next = !open;
+              if (next) {
+                setInspectorOpen(false);
+                setSelectedAnimal(null);
+              }
               return next;
             });
           }}
@@ -1327,7 +1855,10 @@ export default function App() {
             onSuggestTech={handleSuggestTech}
             onSuggestDiplomacy={handleSuggestDiplomacy}
             onAdjustDiplomacy={handleAdjustDiplomacy}
+            onSetVillagePolicy={handleSetVillagePolicy}
+            onSendCaravan={handleSendCaravan}
             onCompleteBridge={handleCompleteBridge}
+            onCompleteCableway={handleCompleteCableway}
             onSpawnVillager={handleSpawnVillager}
             onUnlockAllTech={handleUnlockAllTech}
             onFocusIsland={(islandId) => handleFocusIsland(islandId)}
@@ -1339,6 +1870,9 @@ export default function App() {
           <ValleyMapDrawer
             islands={hud.islands}
             bridges={hud.bridges}
+            cableways={hud.cableways}
+            gliders={hud.gliders}
+            exploreRuins={hud.exploreRuins}
             buildings={hud.buildings}
             villagers={hud.villagers}
             clanVillagers={hud.clanVillagers}
@@ -1367,11 +1901,42 @@ export default function App() {
           />
         )}
 
-        {inspectorOpen && selectedVillager && activeDrawer !== 'climate' && (
+        {devDrawerOpen && (
+          <DevToolsDrawer
+            selectedVillager={selectedVillager}
+            debugShowCollisions={debugShowCollisions}
+            onToggleDebugCollisions={() => setDebugShowCollisions((v) => !v)}
+            onDevAction={handleDevAction}
+            onClose={() => setDevDrawerOpen(false)}
+          />
+        )}
+
+        {!devDrawerOpen && selectedAnimal && activeDrawer !== 'climate' && (
+          <AnimalInspector
+            target={selectedAnimal}
+            livestock={hud.livestock}
+            wildHerds={hud.wildHerds}
+            catPosition={{ x: worldRef.current.catX, y: worldRef.current.catY }}
+            gameMode={hud.gameMode}
+            selectedRtsCount={
+              Array.from(selectedUnitIds).filter((id) => hud.villagers.some((v) => v.id === id)).length
+            }
+            onOrderHuntAttack={(targetId, islandId, x, y) => {
+              const unitIds = Array.from(selectedUnitIds).filter((id) =>
+                hud.villagers.some((v) => v.id === id),
+              );
+              handleRtsOrderUnits(unitIds, { kind: 'attack', targetId, islandId, x, y });
+            }}
+            onClose={() => setSelectedAnimal(null)}
+          />
+        )}
+
+        {!devDrawerOpen && !selectedAnimal && inspectorOpen && selectedVillager && activeDrawer !== 'climate' && (
           <NpcInspector
             villager={selectedVillager}
             allVillagers={[...hud.villagers, ...hud.clanVillagers]}
             gameMode={hud.gameMode}
+            canControl={canControlSelected}
             chiefFocus={hud.chiefFocus}
             taskAvailability={taskAvailability}
             statusFeedback={statusFeedback}
@@ -1381,6 +1946,17 @@ export default function App() {
               setMovingVillagerId((curr) => (curr === selectedVillager.id ? null : selectedVillager.id));
             }}
             onUpliftVillager={handleUpliftVillager}
+            onToggleDraft={() => handleToggleDraft([selectedVillager.id])}
+            onHoldPosition={() =>
+              handleRtsOrderUnits([selectedVillager.id], {
+                kind: 'hold',
+                islandId: selectedVillager.islandId,
+                x: selectedVillager.x,
+                y: selectedVillager.y,
+                holdPosition: true,
+              })
+            }
+            onClearRtsOrder={() => handleRtsOrderUnits([selectedVillager.id], null)}
             onClose={() => {
               setInspectorOpen(false);
               setMovingVillagerId(null);
@@ -1395,18 +1971,33 @@ export default function App() {
         )}
 
         <BottomControlDock
-          villagers={hud.villagers}
+          villagers={ownedVillagers}
           totalBeds={hud.totalHousingBeds}
+          homeIslandId={hud.localHomeIslandId}
           islands={hud.islands}
           focusIslandId={cameraUi.camera.focusIslandId}
           selectedVillagerId={selectedVillager?.id ?? null}
+          selectedUnitIds={selectedUnitIds}
+          gameMode={hud.gameMode}
+          boxSelectMode={boxSelectMode}
           collapsed={dockCollapsed}
           onToggleCollapse={() => setDockCollapsed((c) => !c)}
           onFocusIsland={handleFocusIsland}
-          onSelectVillager={(id) => handleSelectVillager(id, true)}
+          onSelectVillager={(id, additive) => handleSelectVillager(id, true, additive)}
           onFocusVillager={handleFocusVillager}
           onChatSelected={handleChatSelected}
           onCommentSelected={handleCommentSelected}
+          onToggleBoxSelect={() => setBoxSelectMode((b) => !b)}
+          onDraftSelected={() => {
+            const unitIds = Array.from(selectedUnitIds).filter((id) =>
+              ownedVillagers.some((v) => v.id === id),
+            );
+            if (unitIds.length > 0) handleToggleDraft(unitIds);
+          }}
+          onRotateCamera={handleRotateCamera}
+          onResetCameraYaw={handleResetCameraYaw}
+          onZoomIn={() => handleZoomCamera(1.22)}
+          onZoomOut={() => handleZoomCamera(0.82)}
         />
 
         {nextArrival && (

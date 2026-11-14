@@ -1,6 +1,6 @@
 export type GamePhase = 'TITLE_MENU' | 'PLAYING' | 'PAUSED';
 
-export type GameMode = 'whisper_solo' | 'sovereign_sandbox';
+export type GameMode = 'whisper_solo' | 'sovereign_sandbox' | 'shared_siege';
 
 export type WeatherType = 'clear' | 'rain' | 'breeze' | 'snow' | 'mist';
 
@@ -48,6 +48,7 @@ export interface VillageCultureProfile {
 
 export type TaskType =
   | 'forage'
+  | 'gather_stone'
   | 'chop'
   | 'quarry'
   | 'farm'
@@ -59,6 +60,39 @@ export type TaskType =
   | 'smelt'
   | 'guard'
   | 'explore';
+
+export type SkillId =
+  | 'woodcraft'
+  | 'stonecraft'
+  | 'foraging'
+  | 'herbalism'
+  | 'farming'
+  | 'husbandry'
+  | 'masonry'
+  | 'metallurgy'
+  | 'blade_mastery'
+  | 'archery'
+  | 'tactics'
+  | 'seamanship';
+
+export interface UnitStats {
+  strength: number;
+  agility: number;
+  endurance: number;
+  intellect: number;
+  bleedResist: number;
+  bleedStack: number;
+  bleedTimer: number;
+}
+
+export interface RtsOrder {
+  kind: 'move' | 'attack' | 'gather' | 'build' | 'hold';
+  x: number;
+  y: number;
+  islandId: IslandId;
+  targetId?: string;
+  holdPosition?: boolean;
+}
 
 export type LifeStage = 'infant' | 'child' | 'adult' | 'elder';
 
@@ -163,6 +197,54 @@ export type TechBranch =
   | 'maritime_bridges'
   | 'metallurgy_war';
 
+export type RationMode = 'conserve' | 'normal' | 'feast';
+
+export type BorderPolicy = 'closed' | 'parley' | 'open_trade' | 'allied';
+
+export type VisitStatus = 'home' | 'at_perimeter' | 'parleying' | 'admitted' | 'denied';
+
+export type SocialTier =
+  | 'rival'
+  | 'stranger'
+  | 'acquaintance'
+  | 'guest'
+  | 'friend'
+  | 'confidant'
+  | 'bonded';
+
+export interface VillagePolicy {
+  rationMode: RationMode;
+  borderPolicy: BorderPolicy;
+}
+
+export interface ResourceFlowStats {
+  foodIn: number;
+  foodOut: number;
+  timberIn: number;
+  timberOut: number;
+  stoneIn: number;
+  stoneOut: number;
+  oreIn: number;
+  oreOut: number;
+}
+
+export interface LineageRecord {
+  id: string;
+  name: string;
+  homeIslandId: IslandId;
+  cultureId: CultureId;
+  lifeStage: LifeStage;
+  birthDay: number;
+  deathDay: number | null;
+  deathCause: DeathCause | null;
+  parentIds: [string, string] | null;
+  partnerId: string | null;
+  childrenIds: string[];
+  generation: number;
+  traits: string[];
+  cloakColor: string;
+}
+
 export interface VillageResources {
   food: number; // combined grain, berries, meat, fish
   berries: number;
@@ -201,6 +283,15 @@ export interface TraitDefinition {
   nightLoving?: boolean;
   morningGrumpy?: boolean;
   socialAura?: number;
+  bleedChanceMult?: number;
+  damageTakenMult?: number;
+  attackPowerMult?: number;
+  hpMaxMod?: number;
+  healRateMult?: number;
+  teachRateMult?: number;
+  gatherYieldMult?: number;
+  moveSpeedMult?: number;
+  knowledgeMult?: number;
 }
 
 export interface CultureDefinition {
@@ -224,6 +315,22 @@ export interface TechNode {
   prereqs: string[];
   summary: string;
   unlocksLabel: string;
+  effectSummary?: string;
+}
+
+export type TerrainStyle =
+  | 'basin'
+  | 'cliffside'
+  | 'multi_river'
+  | 'caldera'
+  | 'atoll'
+  | 'ruins'
+  | 'volcanic'
+  | 'mountain';
+
+export interface IslandRiverSpec {
+  width: number;
+  points: { dx: number; dy: number }[];
 }
 
 export interface IslandDef {
@@ -231,6 +338,7 @@ export interface IslandDef {
   name: string;
   subtitle: string;
   biome: IslandBiome;
+  terrainStyle: TerrainStyle;
   roleTag: 'homeland' | 'timber' | 'harvest' | 'forge' | 'harbor' | 'exploration' | 'battle' | 'alpine';
   centerX: number;
   centerY: number;
@@ -242,6 +350,7 @@ export interface IslandDef {
   springOffset?: { dx: number; dy: number };
   hasWaterfall: boolean;
   waterfallAngle?: number;
+  rivers?: IslandRiverSpec[];
   dockSpot: { x: number; y: number; seaX: number; seaY: number };
   oreRichness: 'none' | 'stone' | 'rich_metals';
   soilQuality: number;
@@ -251,6 +360,7 @@ export interface IslandState {
   id: IslandId;
   discovered: boolean;
   owningCultureId: CultureId;
+  ownerPlayerId?: string | null;
   dockBuilt: boolean;
   settledDay: number | null;
 }
@@ -338,7 +448,7 @@ export interface ProjectileFx {
 export interface WildNodeEntity {
   id: string;
   islandId: IslandId;
-  kind: 'berry_bush' | 'flint_pile' | 'branch_pile' | 'copper_vein' | 'iron_vein' | 'tree';
+  kind: 'berry_bush' | 'flint_pile' | 'stone_boulder' | 'branch_pile' | 'copper_vein' | 'iron_vein' | 'tree';
   x: number;
   y: number;
   amount: number;
@@ -347,12 +457,24 @@ export interface WildNodeEntity {
   scale?: number;
 }
 
+export interface EntityStuckState {
+  lastX: number;
+  lastY: number;
+  timer: number;
+  detourSign: 1 | -1;
+}
+
 export interface VillagerEntity {
   id: string;
   name: string;
   bioDescription: string;
   cultureId: CultureId;
   islandId: IslandId;
+  homeIslandId: IslandId;
+  ownerPlayerId?: string | null;
+  visitStatus?: VisitStatus;
+  visitTargetIslandId?: IslandId | null;
+  parleyPartnerId?: string | null;
   isStranger?: boolean; // hostile or wary outsider clan member
   isNativeClan?: boolean; // native inhabitant belonging to another island village
   cloakColor: string;
@@ -395,6 +517,7 @@ export interface VillagerEntity {
   relationships: Record<string, number>;
   hangOutTargetId: string | null;
   socialCooldown: number;
+  pairChatCooldowns?: Record<string, number>;
 
   suggestedTask: TaskType | null;
   activeTask: TaskType;
@@ -414,6 +537,13 @@ export interface VillagerEntity {
   birthCooldownDays: number;
   attackCooldown: number;
   edgeAckCooldown?: number;
+  stuckState?: EntityStuckState;
+  stats: UnitStats;
+  skills: Partial<Record<SkillId, number>>;
+  skillXp?: Partial<Record<SkillId, number>>;
+  rtsOrder?: RtsOrder | null;
+  drafted?: boolean;
+  teachCooldown?: number;
 }
 
 export interface CropPlotState {
@@ -478,6 +608,7 @@ export interface LivestockEntity {
   pauseTimer: number;
   yieldTimer: number;
   color: string;
+  scale?: number;
 }
 
 export interface WildHerdEntity {
@@ -494,6 +625,8 @@ export interface WildHerdEntity {
   maxHp: number;
   aggroTargetId: string | null;
   color: string;
+  scale?: number;
+  stuckState?: EntityStuckState;
 }
 
 export interface BoatEntity {
@@ -541,6 +674,7 @@ export type TravelerAttitude = 'warm' | 'humble' | 'boisterous' | 'aloof' | 'res
 export interface ArrivalCandidate {
   id: string;
   kind: 'traveler' | 'birth';
+  islandId?: IslandId;
   name: string;
   bioDescription: string;
   lifeStage: LifeStage;
@@ -601,9 +735,20 @@ export interface SettingsState {
 export interface CameraState {
   x: number;
   y: number;
-  zoom: number; // 0.09 (All Islands Overview) .. 1.55 (Detail)
+  zoom: number; // 0.06 (All Islands Overview) .. 3.2 (Deep Close-Up)
+  yaw: number; // horizontal orbit angle in radians (0 = default south-looking)
+  pitch: number; // vertical tilt angle in radians (0.22 .. 1.38)
   followVillagerId: string | null;
   focusIslandId: IslandId | 'all';
+}
+
+export interface SiegeState {
+  wave: number;
+  nextWaveTimer: number;
+  activeFronts: IslandId[];
+  totalKills: number;
+  warningText: string | null;
+  lastWaveDay: number;
 }
 
 export interface Particle {
@@ -625,7 +770,13 @@ export interface WorldState {
   version: number;
   gameMode: GameMode;
   era: VillageEra;
+  localHomeIslandId: IslandId;
+  islandOwners: Record<IslandId, string | null>;
   resources: VillageResources;
+  villageResources: Record<IslandId, VillageResources>;
+  villagePolicies: Record<IslandId, VillagePolicy>;
+  resourceFlows: Record<IslandId, ResourceFlowStats>;
+  lineage: Record<string, LineageRecord>;
   comforts: ComfortStock;
   knowledgeXp: number;
   unlockedTechIds: string[];
@@ -676,12 +827,19 @@ export interface WorldState {
   catTargetY: number;
   catFacing: 1 | -1;
   catPauseTimer: number;
+  siege: SiegeState;
 }
 
 export interface HudSnapshot {
   gameMode: GameMode;
   era: VillageEra;
+  localHomeIslandId: IslandId;
+  islandOwners: Record<IslandId, string | null>;
   resources: VillageResources;
+  villageResources: Record<IslandId, VillageResources>;
+  villagePolicies: Record<IslandId, VillagePolicy>;
+  resourceFlows: Record<IslandId, ResourceFlowStats>;
+  lineage: Record<string, LineageRecord>;
   comforts: ComfortStock;
   knowledgeXp: number;
   unlockedTechIds: string[];
@@ -718,12 +876,14 @@ export interface HudSnapshot {
   ruinDaysCount: number;
   departedCount: number;
   deathCount: number;
+  siege: SiegeState;
 }
 
 export interface RoomPlayerPresence {
   id: string;
   name: string;
   color: string;
+  homeIslandId: IslandId;
   focusIslandId: IslandId | 'all';
   cursorSimX: number;
   cursorSimY: number;
@@ -754,7 +914,35 @@ export type WorldCommand =
   | { kind: 'sovereign_build_bridge'; bridgeId: string }
   | { kind: 'sovereign_build_cableway'; cableId: string }
   | { kind: 'sovereign_uplift_villager'; villagerId: string }
-  | { kind: 'sovereign_unlock_all_tech' };
+  | { kind: 'sovereign_unlock_all_tech' }
+  | { kind: 'rts_order_units'; villagerIds: string[]; order: RtsOrder | null }
+  | { kind: 'sovereign_draft_toggle'; villagerIds: string[]; drafted?: boolean }
+  | { kind: 'set_village_policy'; islandId: IslandId; rationMode?: RationMode; borderPolicy?: BorderPolicy }
+  | { kind: 'send_caravan'; fromIslandId: IslandId; toIslandId: IslandId; resource: keyof VillageResources; amount: number }
+  | {
+      kind: 'dev_action';
+      action:
+        | 'grant_resources'
+        | 'spawn_villager'
+        | 'spawn_raider'
+        | 'spawn_animal'
+        | 'spawn_stone'
+        | 'spawn_tree'
+        | 'trigger_siege'
+        | 'advance_day'
+        | 'unlock_all_tech'
+        | 'unlock_next_tech'
+        | 'finish_builds'
+        | 'heal_all'
+        | 'reroll_traits'
+        | 'grant_skill_xp';
+      islandId?: IslandId;
+      villagerId?: string;
+      entityKind?: string;
+      traitId?: string;
+      skillId?: SkillId;
+      amount?: number;
+    };
 
 export type ClientWsMsg =
   | { type: 'create_room'; playerName: string; playerColor: string; gameMode: GameMode }

@@ -8,12 +8,15 @@ import type {
   IslandId,
   LifeStage,
   SeasonType,
+  SkillId,
   SkyBridgeEntity,
   SkyCablewayEntity,
+  SocialTier,
   TaskType,
   TimePreset,
   TraitDefinition,
   TravelerAttitude,
+  UnitStats,
   VillageEra,
   VillageResources,
   VillagerWishType,
@@ -23,7 +26,7 @@ import type {
 export const WORLD_WIDTH = 7600;
 export const WORLD_HEIGHT = 5200;
 export const WORLD_SCALE = 0.085; // 7600x5200 -> 646x442 3D world units
-export const CURRENT_WORLD_VERSION = 7;
+export const CURRENT_WORLD_VERSION = 9;
 
 export function islandCoastWobble(def: IslandDef, angleRad: number): number {
   return (
@@ -75,18 +78,32 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
     {
       id: 'cradle',
       name: 'Cradle Isle',
-      subtitle: 'Sunlit meadow basin with mossy spring, wild berries, flint & rising northern bluff.',
+      subtitle: 'Sunlit meadow basin with mossy spring, winding stream, boulders & rising northern bluff.',
       biome: 'meadow',
+      terrainStyle: 'basin',
       roleTag: 'homeland',
       centerX: 2950,
       centerY: 2780,
-      radiusX: 780,
-      radiusY: 530,
-      elevationY: 0.75,
+      radiusX: 760,
+      radiusY: 520,
+      elevationY: 0.78,
       defaultCultureId: 'hearthfolk',
       hasSpring: true,
-      springOffset: { dx: -245, dy: -145 },
-      hasWaterfall: false,
+      springOffset: { dx: -235, dy: -135 },
+      hasWaterfall: true,
+      waterfallAngle: 0.92,
+      rivers: [
+        {
+          width: 44,
+          points: [
+            { dx: -235, dy: -135 },
+            { dx: -90, dy: -35 },
+            { dx: 85, dy: 90 },
+            { dx: 290, dy: 270 },
+            { dx: 455, dy: 385 },
+          ],
+        },
+      ],
       oreRichness: 'stone',
       soilQuality: 0.95,
     },
@@ -95,18 +112,19 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
   timbercrown: makeIsland(
     {
       id: 'timbercrown',
-      name: 'Timbercrown Ridge',
-      subtitle: 'Highland stepped cedar plateau & granite escarpment home to the Cedarwood Sylvans.',
+      name: 'Timbercrown Cliffside',
+      subtitle: 'Sheer multi-tiered cedar cliffside escarpment home to the Cedarwood Sylvans.',
       biome: 'pine',
+      terrainStyle: 'cliffside',
       roleTag: 'timber',
       centerX: 1420,
       centerY: 1820,
-      radiusX: 720,
-      radiusY: 490,
-      elevationY: 5.6,
+      radiusX: 850,
+      radiusY: 430,
+      elevationY: 6.2,
       defaultCultureId: 'sylvan',
       hasSpring: true,
-      springOffset: { dx: 185, dy: 125 },
+      springOffset: { dx: 185, dy: 95 },
       hasWaterfall: true,
       waterfallAngle: 0.72,
       oreRichness: 'stone',
@@ -117,21 +135,52 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
   sunterrace: makeIsland(
     {
       id: 'sunterrace',
-      name: 'Sun-Terrace Isle',
-      subtitle: 'Three stepped golden loam terraces built for lush crops, pastures & apple orchards.',
+      name: 'Sun-Terrace Rivers',
+      subtitle: 'Sprawling three-river valley of golden loam terraces, rich harvests & cascading channels.',
       biome: 'terrace',
+      terrainStyle: 'multi_river',
       roleTag: 'harvest',
-      centerX: 4560,
-      centerY: 3600,
-      radiusX: 800,
-      radiusY: 540,
-      elevationY: 1.0,
+      centerX: 4620,
+      centerY: 3640,
+      radiusX: 950,
+      radiusY: 650,
+      elevationY: 1.05,
       defaultCultureId: 'hearthfolk',
       hasSpring: true,
-      springOffset: { dx: -185, dy: 145 },
-      hasWaterfall: false,
+      springOffset: { dx: -210, dy: -165 },
+      hasWaterfall: true,
+      waterfallAngle: 0.45,
+      rivers: [
+        {
+          width: 54,
+          points: [
+            { dx: -520, dy: -260 },
+            { dx: -210, dy: -165 },
+            { dx: 40, dy: -30 },
+            { dx: 360, dy: 120 },
+            { dx: 790, dy: 250 },
+          ],
+        },
+        {
+          width: 46,
+          points: [
+            { dx: -210, dy: -165 },
+            { dx: -165, dy: 45 },
+            { dx: -40, dy: 255 },
+            { dx: 150, dy: 525 },
+          ],
+        },
+        {
+          width: 40,
+          points: [
+            { dx: 40, dy: -30 },
+            { dx: 225, dy: -195 },
+            { dx: 510, dy: -340 },
+          ],
+        },
+      ],
       oreRichness: 'none',
-      soilQuality: 1.25,
+      soilQuality: 1.32,
     },
     -0.42,
   ),
@@ -139,14 +188,15 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
     {
       id: 'coppercrag',
       name: 'Copper-Crag Spire',
-      subtitle: 'Towering basalt caldera & mineral crags settled by the Cragforge Smiths.',
+      subtitle: 'Steep basalt caldera & mineral crags settled by the Cragforge Smiths.',
       biome: 'crag',
+      terrainStyle: 'caldera',
       roleTag: 'forge',
       centerX: 4180,
       centerY: 1340,
-      radiusX: 690,
-      radiusY: 470,
-      elevationY: 6.6,
+      radiusX: 610,
+      radiusY: 445,
+      elevationY: 6.9,
       defaultCultureId: 'cragforge',
       hasSpring: false,
       hasWaterfall: true,
@@ -160,17 +210,18 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
     {
       id: 'mistatoll',
       name: 'Outer Mist Atoll',
-      subtitle: 'Crescent sea-cliff lagoon & mist harbor guarded by the Mist Mariners.',
+      subtitle: 'Compact crescent sea-cliff lagoon reachable only by boat, glider, or sky-cable.',
       biome: 'mist_atoll',
+      terrainStyle: 'atoll',
       roleTag: 'harbor',
       centerX: 5960,
       centerY: 2660,
-      radiusX: 660,
-      radiusY: 475,
+      radiusX: 500,
+      radiusY: 380,
       elevationY: 0.65,
       defaultCultureId: 'mist_mariner',
       hasSpring: true,
-      springOffset: { dx: 150, dy: -110 },
+      springOffset: { dx: 115, dy: -85 },
       hasWaterfall: false,
       oreRichness: 'stone',
       soilQuality: 0.8,
@@ -181,17 +232,18 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
     {
       id: 'starbloom',
       name: 'Starbloom Ruins',
-      subtitle: 'Jade-meadow exploration sanctuary dotted with ancient starlight obelisks, orchards & healing springs.',
+      subtitle: 'Jade-meadow exploration sanctuary dotted with starlight obelisks, orchards & healing springs.',
       biome: 'ruins',
+      terrainStyle: 'ruins',
       roleTag: 'exploration',
       centerX: 1460,
       centerY: 3960,
-      radiusX: 700,
-      radiusY: 490,
-      elevationY: 1.85,
+      radiusX: 680,
+      radiusY: 500,
+      elevationY: 2.05,
       defaultCultureId: 'hearthfolk',
       hasSpring: true,
-      springOffset: { dx: -140, dy: 90 },
+      springOffset: { dx: -135, dy: 85 },
       hasWaterfall: true,
       waterfallAngle: 2.35,
       oreRichness: 'stone',
@@ -203,14 +255,15 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
     {
       id: 'embervault',
       name: 'Ashen Bastion',
-      subtitle: 'Scorched volcanic fortress holding rich iron vaults—guarded by the hostile Ashen Bastion raiders.',
+      subtitle: 'Unbridged volcanic fortress holding rich iron vaults—guarded by the hostile Ashen Bastion.',
       biome: 'volcanic',
+      terrainStyle: 'volcanic',
       roleTag: 'battle',
       centerX: 6140,
       centerY: 1080,
-      radiusX: 720,
-      radiusY: 500,
-      elevationY: 4.4,
+      radiusX: 650,
+      radiusY: 460,
+      elevationY: 4.8,
       defaultCultureId: 'ashen_raider',
       hasSpring: false,
       hasWaterfall: false,
@@ -222,18 +275,19 @@ export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
   frostpeak: makeIsland(
     {
       id: 'frostpeak',
-      name: 'Frostpeak Glacier',
-      subtitle: 'High alpine spire of snow-laden cedars, deep iron veins, and a frozen Star-Shrine.',
+      name: 'Frostpeak Massif',
+      subtitle: 'Towering unbridged mountain island of jagged alpine peaks, passes, iron veins & snow shrines.',
       biome: 'frost',
+      terrainStyle: 'mountain',
       roleTag: 'alpine',
       centerX: 2320,
       centerY: 860,
-      radiusX: 640,
-      radiusY: 440,
-      elevationY: 8.4,
+      radiusX: 790,
+      radiusY: 555,
+      elevationY: 8.8,
       defaultCultureId: 'cragforge',
       hasSpring: true,
-      springOffset: { dx: 120, dy: 80 },
+      springOffset: { dx: 140, dy: 95 },
       hasWaterfall: true,
       waterfallAngle: 1.95,
       oreRichness: 'rich_metals',
@@ -253,6 +307,26 @@ export const ISLAND_ORDER: IslandId[] = [
   'embervault',
   'frostpeak',
 ];
+
+// Settleable islands assigned sequentially to players in standard multiplayer rooms
+export const PLAYER_VILLAGE_ISLANDS: IslandId[] = [
+  'cradle',
+  'sunterrace',
+  'timbercrown',
+  'starbloom',
+  'coppercrag',
+  'mistatoll',
+];
+
+export function getSocialTier(score: number): { id: SocialTier; label: string; color: string } {
+  if (score < 15) return { id: 'rival', label: 'Rival', color: '#E38589' };
+  if (score < 28) return { id: 'stranger', label: 'Stranger', color: '#9EB1C2' };
+  if (score < 45) return { id: 'acquaintance', label: 'Acquaintance', color: '#D8CEBA' };
+  if (score < 62) return { id: 'guest', label: 'Guest', color: '#A8D8EA' };
+  if (score < 78) return { id: 'friend', label: 'Friend', color: '#8CE0AC' };
+  if (score < 90) return { id: 'confidant', label: 'Confidant', color: '#FDE68A' };
+  return { id: 'bonded', label: 'Bonded Kin', color: '#F472B6' };
+}
 
 function createBridgeSpec(
   id: string,
@@ -332,7 +406,7 @@ export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
     1,
     'rope_bridges',
     26,
-    10,
+    12,
   ),
   createBridgeSpec(
     'bridge_cradle_timber',
@@ -342,7 +416,7 @@ export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
     1,
     'rope_bridges',
     32,
-    14,
+    16,
   ),
   createBridgeSpec(
     'bridge_cradle_starbloom',
@@ -363,36 +437,6 @@ export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
     'sky_causeways',
     44,
     36,
-  ),
-  createBridgeSpec(
-    'bridge_sun_crag',
-    'Sun-Crag Stone Viaduct',
-    'sunterrace',
-    'coppercrag',
-    2,
-    'sky_causeways',
-    46,
-    38,
-  ),
-  createBridgeSpec(
-    'bridge_sun_mist',
-    'Outer Mist Reef Span',
-    'sunterrace',
-    'mistatoll',
-    2,
-    'sail_navigation',
-    42,
-    26,
-  ),
-  createBridgeSpec(
-    'bridge_crag_ember',
-    'Ashen Siege Causeway',
-    'coppercrag',
-    'embervault',
-    2,
-    'sky_causeways',
-    52,
-    46,
   ),
 ];
 
@@ -534,6 +578,129 @@ export const WISH_LABELS: Record<VillagerWishType, string> = {
 };
 
 export const TRAITS: Record<string, TraitDefinition> = {
+  hard_skin: {
+    id: 'hard_skin',
+    name: 'Iron-Hide',
+    polarity: 'positive',
+    summary: 'Calloused thick skin: -65% chance to bleed, -18% physical damage taken, slightly slower stride (-5%).',
+    workSpeedMult: 1.04,
+    moodDrift: 0.05,
+    energyDrainMult: 0.96,
+    obedienceMod: 0.05,
+    bleedChanceMult: 0.35,
+    damageTakenMult: 0.82,
+    hpMaxMod: 16,
+    moveSpeedMult: 0.95,
+  },
+  glass_cannon: {
+    id: 'glass_cannon',
+    name: 'Edge-Striker',
+    polarity: 'positive',
+    summary: '+24% attack strike power, -12 max HP and +15% vulnerability when struck.',
+    workSpeedMult: 1.05,
+    moodDrift: 0,
+    energyDrainMult: 1.04,
+    obedienceMod: -0.02,
+    attackPowerMult: 1.24,
+    damageTakenMult: 1.15,
+    hpMaxMod: -12,
+  },
+  calculated_mind: {
+    id: 'calculated_mind',
+    name: 'Calculated Mind',
+    polarity: 'positive',
+    summary: '+28% Knowledge XP & +35% faster skill teaching; slightly hesitant in melee (-8% attack).',
+    workSpeedMult: 1.08,
+    moodDrift: 0.1,
+    energyDrainMult: 0.98,
+    obedienceMod: 0.1,
+    knowledgeMult: 1.28,
+    teachRateMult: 1.35,
+    attackPowerMult: 0.92,
+  },
+  pain_dampener: {
+    id: 'pain_dampener',
+    name: 'Pain-Dampener',
+    polarity: 'positive',
+    summary: 'Ignores minor wounds: -35% bleed tick severity and fights steadily at low HP.',
+    workSpeedMult: 1.05,
+    moodDrift: 0.1,
+    energyDrainMult: 0.95,
+    obedienceMod: 0.06,
+    bleedChanceMult: 0.65,
+    damageTakenMult: 0.9,
+    braveryMod: 0.22,
+  },
+  danger_sense: {
+    id: 'danger_sense',
+    name: 'Sixth Warning',
+    polarity: 'positive',
+    summary: 'Anticipates ambushes: -14% incoming damage & spots raiders early.',
+    workSpeedMult: 1.02,
+    moodDrift: 0.05,
+    energyDrainMult: 0.98,
+    obedienceMod: 0.04,
+    damageTakenMult: 0.86,
+    curiosityMod: 0.14,
+  },
+  swift_recovery: {
+    id: 'swift_recovery',
+    name: 'Mending Blood',
+    polarity: 'positive',
+    summary: 'Wounds clot & heal 45% faster beside hearths and springs.',
+    workSpeedMult: 1.0,
+    moodDrift: 0.15,
+    energyDrainMult: 0.94,
+    obedienceMod: 0.08,
+    healRateMult: 1.45,
+    bleedChanceMult: 0.72,
+  },
+  lone_wolf: {
+    id: 'lone_wolf',
+    name: 'Lone Vanguard',
+    polarity: 'positive',
+    summary: '+16% gather & combat focus when away from crowds, slower social warmth.',
+    workSpeedMult: 1.16,
+    moodDrift: -0.05,
+    energyDrainMult: 0.94,
+    obedienceMod: -0.1,
+    attackPowerMult: 1.12,
+    socialAura: -0.15,
+  },
+  adaptation: {
+    id: 'adaptation',
+    name: 'Adaptive Grit',
+    polarity: 'positive',
+    summary: 'Learns skills & repairs structures 20% quicker through adversity.',
+    workSpeedMult: 1.14,
+    moodDrift: 0.1,
+    energyDrainMult: 0.92,
+    obedienceMod: 0.08,
+    teachRateMult: 1.2,
+    knowledgeMult: 1.15,
+  },
+  master_artisan: {
+    id: 'master_artisan',
+    name: 'Stonewright Eye',
+    polarity: 'positive',
+    summary: '+22% resource yield from stone, timber & ore nodes.',
+    workSpeedMult: 1.14,
+    moodDrift: 0.1,
+    energyDrainMult: 0.96,
+    obedienceMod: 0.1,
+    gatherYieldMult: 1.22,
+  },
+  bloodline_vigor: {
+    id: 'bloodline_vigor',
+    name: 'Sturdy Lineage',
+    polarity: 'positive',
+    summary: '+22 max HP & steady endurance across long winters.',
+    workSpeedMult: 1.04,
+    moodDrift: 0.12,
+    energyDrainMult: 0.88,
+    obedienceMod: 0.08,
+    hpMaxMod: 22,
+  },
   curious_scout: {
     id: 'curious_scout',
     name: 'Horizon-Curious',
@@ -544,38 +711,42 @@ export const TRAITS: Record<string, TraitDefinition> = {
     energyDrainMult: 0.94,
     obedienceMod: 0.04,
     curiosityMod: 0.42,
+    moveSpeedMult: 1.08,
   },
   green_thumb: {
     id: 'green_thumb',
     name: 'Seed Keeper',
     polarity: 'positive',
-    summary: '+28% crop growth & pasture care.',
-    workSpeedMult: 1.28,
+    summary: '+28% crop growth, herb care & foraging yield.',
+    workSpeedMult: 1.24,
     moodDrift: 0.35,
     energyDrainMult: 0.95,
     obedienceMod: 0.1,
+    gatherYieldMult: 1.18,
   },
   brave_hunter: {
     id: 'brave_hunter',
     name: 'Stout-Hearted',
     polarity: 'positive',
-    summary: 'Fearless against wild boars & Ashen Bastion raiders.',
-    workSpeedMult: 1.12,
+    summary: 'Fearless against wild boars & Ashen Bastion raiders (+14% strike power).',
+    workSpeedMult: 1.1,
     moodDrift: 0.15,
     energyDrainMult: 0.92,
     obedienceMod: 0.06,
     braveryMod: 0.38,
+    attackPowerMult: 1.14,
   },
   warmhearted: {
     id: 'warmhearted',
     name: 'Warmhearted',
     polarity: 'positive',
-    summary: 'Lifts neighbors’ spirits & builds trust with travelers.',
+    summary: 'Lifts neighbors’ spirits, speeds skill teaching (+25%) & builds trust.',
     workSpeedMult: 1.05,
-    moodDrift: 0.5,
+    moodDrift: 0.45,
     energyDrainMult: 1.0,
     obedienceMod: 0.18,
     socialAura: 0.5,
+    teachRateMult: 1.25,
   },
   clever_crafter: {
     id: 'clever_crafter',
@@ -596,17 +767,56 @@ export const TRAITS: Record<string, TraitDefinition> = {
     moodDrift: 0.2,
     energyDrainMult: 0.82,
     obedienceMod: 0.14,
+    hpMaxMod: 8,
   },
   swift_footed: {
     id: 'swift_footed',
     name: 'Fleet-Footed',
     polarity: 'positive',
-    summary: 'Moves briskly across cliffs & sky-bridges.',
-    workSpeedMult: 1.12,
+    summary: 'Moves 16% faster across cliffs & sky-bridges.',
+    workSpeedMult: 1.1,
     moodDrift: 0.15,
     energyDrainMult: 0.94,
     obedienceMod: 0.08,
     curiosityMod: 0.16,
+    moveSpeedMult: 1.16,
+  },
+  hollow_boned: {
+    id: 'hollow_boned',
+    name: 'Thin-Skinned',
+    polarity: 'negative',
+    summary: 'Fragile frame: +45% bleeding chance & -12 max HP, moves lightly (+6%).',
+    workSpeedMult: 0.98,
+    moodDrift: -0.08,
+    energyDrainMult: 1.05,
+    obedienceMod: 0.04,
+    bleedChanceMult: 1.45,
+    hpMaxMod: -12,
+    moveSpeedMult: 1.06,
+  },
+  slow_healer: {
+    id: 'slow_healer',
+    name: 'Slow Clotting',
+    polarity: 'negative',
+    summary: 'Recovers HP 30% slower after injuries or raids.',
+    workSpeedMult: 0.96,
+    moodDrift: -0.1,
+    energyDrainMult: 1.04,
+    obedienceMod: 0.02,
+    healRateMult: 0.7,
+    bleedChanceMult: 1.25,
+  },
+  curse_magnet: {
+    id: 'curse_magnet',
+    name: 'Jinxed Step',
+    polarity: 'negative',
+    summary: 'Draws extra trouble in skirmishes (+14% incoming damage), learns grit (+10% XP).',
+    workSpeedMult: 0.95,
+    moodDrift: -0.18,
+    energyDrainMult: 1.06,
+    obedienceMod: -0.05,
+    damageTakenMult: 1.14,
+    knowledgeMult: 1.1,
   },
   cautious_homebody: {
     id: 'cautious_homebody',
@@ -671,6 +881,105 @@ export const NEGATIVE_TRAIT_IDS = Object.values(TRAITS)
   .filter((t) => t.polarity === 'negative')
   .map((t) => t.id);
 
+export const SKILL_META: Record<SkillId, { label: string; category: 'craft' | 'harvest' | 'combat' | 'lore'; summary: string }> = {
+  woodcraft: { label: 'Woodcraft', category: 'harvest', summary: 'Faster tree felling & +timber yield.' },
+  stonecraft: { label: 'Stonecraft', category: 'harvest', summary: 'Faster boulder gathering & quarry yield.' },
+  foraging: { label: 'Foraging', category: 'harvest', summary: 'Finds extra wild berries, twigs & herbs.' },
+  herbalism: { label: 'Herbalism', category: 'lore', summary: 'Tends wounds, slows bleeding & brews tea.' },
+  farming: { label: 'Farming', category: 'harvest', summary: 'Accelerates crop growth & harvest yields.' },
+  husbandry: { label: 'Husbandry', category: 'harvest', summary: 'Calms pasture animals & boosts wool/meat.' },
+  masonry: { label: 'Masonry', category: 'craft', summary: 'Speeds building construction & repairs.' },
+  metallurgy: { label: 'Metallurgy', category: 'craft', summary: 'Improves smelting copper, bronze & iron.' },
+  blade_mastery: { label: 'Blade Mastery', category: 'combat', summary: 'Raises spear & sword melee damage + bleed chance.' },
+  archery: { label: 'Archery', category: 'combat', summary: 'Boosts bow damage, range & hunting precision.' },
+  tactics: { label: 'Tactics', category: 'combat', summary: 'Reduces damage taken & steadies defense.' },
+  seamanship: { label: 'Seamanship', category: 'lore', summary: 'Boosts fishing, sailing & glider navigation.' },
+};
+
+export const ALL_SKILL_IDS = Object.keys(SKILL_META) as SkillId[];
+
+export function rollUnitStats(traits: string[], isRaider = false): UnitStats {
+  const randStat = (base: number) => Math.max(4, Math.min(18, base + Math.floor(Math.random() * 6) - 2));
+  let str = randStat(isRaider ? 10 : 8);
+  let agi = randStat(8);
+  let end = randStat(isRaider ? 10 : 8);
+  let int = randStat(isRaider ? 7 : 9);
+  let bleedResist = 0.08 + end * 0.015;
+
+  for (const tid of traits) {
+    if (tid === 'hard_skin') {
+      end = Math.min(18, end + 3);
+      agi = Math.max(4, agi - 1);
+      bleedResist += 0.45;
+    } else if (tid === 'glass_cannon') {
+      str = Math.min(18, str + 3);
+      end = Math.max(4, end - 2);
+    } else if (tid === 'calculated_mind') {
+      int = Math.min(18, int + 3);
+    } else if (tid === 'swift_footed') {
+      agi = Math.min(18, agi + 3);
+    } else if (tid === 'hollow_boned') {
+      end = Math.max(4, end - 2);
+      bleedResist = Math.max(0, bleedResist - 0.12);
+    } else if (tid === 'bloodline_vigor') {
+      end = Math.min(18, end + 2);
+      str = Math.min(18, str + 1);
+    } else if (tid === 'swift_recovery' || tid === 'pain_dampener') {
+      bleedResist += 0.22;
+    }
+  }
+
+  return {
+    strength: str,
+    agility: agi,
+    endurance: end,
+    intellect: int,
+    bleedResist: Math.max(0, Math.min(0.88, Number(bleedResist.toFixed(2)))),
+    bleedStack: 0,
+    bleedTimer: 0,
+  };
+}
+
+export function rollStarterSkills(lifeStage: LifeStage, isRaider = false): Partial<Record<SkillId, number>> {
+  if (lifeStage === 'infant') return {};
+  const skills: Partial<Record<SkillId, number>> = {};
+  const count = lifeStage === 'elder' ? 3 : 2;
+  const pool: SkillId[] = isRaider
+    ? ['blade_mastery', 'archery', 'tactics', 'stonecraft']
+    : [...ALL_SKILL_IDS];
+  for (let i = 0; i < count; i++) {
+    const sk = pickRandom(pool);
+    skills[sk] = Math.max(skills[sk] ?? 0, lifeStage === 'elder' ? 2 : 1);
+  }
+  return skills;
+}
+
+export function inheritBabyTraits(parents?: { id: string; name: string; traits: string[] }[]): string[] {
+  if (!parents || parents.length === 0) return rollBalancedTraits();
+  const parentPool = Array.from(new Set(parents.flatMap((p) => p.traits))).filter((id) => Boolean(TRAITS[id]));
+  const chosen: string[] = [];
+  if (parentPool.length > 0) {
+    const first = pickRandom(parentPool);
+    chosen.push(first);
+    if (parentPool.length > 1 && Math.random() < 0.48) {
+      const secondPool = parentPool.filter((id) => id !== first);
+      if (secondPool.length > 0) chosen.push(pickRandom(secondPool));
+    }
+  }
+  // Balance traits so babies aren't overloaded with only positives or only negatives
+  const hasPos = chosen.some((id) => TRAITS[id]?.polarity === 'positive');
+  const hasNeg = chosen.some((id) => TRAITS[id]?.polarity === 'negative');
+  if (!hasPos) {
+    const pool = POSITIVE_TRAIT_IDS.filter((id) => !chosen.includes(id));
+    if (pool.length > 0) chosen.push(pickRandom(pool));
+  }
+  if (!hasNeg && (chosen.length < 3 || Math.random() < 0.7)) {
+    const pool = NEGATIVE_TRAIT_IDS.filter((id) => !chosen.includes(id));
+    if (pool.length > 0) chosen.push(pickRandom(pool));
+  }
+  return chosen.slice(0, 3);
+}
+
 export interface TaskMeta {
   id: TaskType;
   key: string;
@@ -680,15 +989,16 @@ export interface TaskMeta {
 }
 
 export const TASKS: TaskMeta[] = [
-  { id: 'forage', key: '1', label: 'Forage', verb: 'Gathering berries & flint' },
-  { id: 'chop', key: '2', label: 'Woodcraft', verb: 'Cutting cedar & kindling' },
+  { id: 'forage', key: '1', label: 'Forage', verb: 'Gathering berries & kindling' },
+  { id: 'gather_stone', key: 'Q', label: 'Stone', verb: 'Gathering field stones & flint' },
+  { id: 'chop', key: '2', label: 'Woodcraft', verb: 'Cutting cedar & timber' },
   { id: 'hunt', key: '3', label: 'Hunt', verb: 'Tracking wild game', requiredTechId: 'flint_spears' },
   { id: 'farm', key: '4', label: 'Farm', verb: 'Tending cultivated crops', requiredTechId: 'wild_botany' },
   { id: 'pasture', key: '5', label: 'Pasture', verb: 'Herding sheep & livestock', requiredTechId: 'animal_husbandry' },
   { id: 'quarry', key: '6', label: 'Quarry', verb: 'Mining stone & ore', requiredTechId: 'masonry_bakery' },
   { id: 'fish', key: '7', label: 'Fish', verb: 'Netting sky-sea fish', requiredTechId: 'dugout_docks' },
   { id: 'bake', key: '8', label: 'Bake', verb: 'Baking hearth loaves', requiredTechId: 'masonry_bakery' },
-  { id: 'study', key: '9', label: 'Study', verb: 'Writing cultural lore', requiredTechId: 'scholarship' },
+  { id: 'study', key: '9', label: 'Study', verb: 'Writing & teaching cultural lore', requiredTechId: 'scholarship' },
   { id: 'smelt', key: '0', label: 'Smelt', verb: 'Forging bronze & iron', requiredTechId: 'bronze_smelting' },
   { id: 'guard', key: 'G', label: 'Guard', verb: 'Patrolling watchtowers', requiredTechId: 'archery_watch' },
   { id: 'explore', key: 'E', label: 'Explore', verb: 'Scouting ruins & horizons', requiredTechId: 'rope_bridges' },
@@ -817,13 +1127,8 @@ export function generateCandidate(
     guard++;
   }
 
-  let inherited: string | undefined;
-  if (kind === 'birth' && parents && parents.length > 0) {
-    const combinedTraits = parents.flatMap((p) => p.traits);
-    if (combinedTraits.length > 0) inherited = pickRandom(combinedTraits);
-  }
-
-  const traits = rollBalancedTraits(inherited);
+  const traits =
+    kind === 'birth' ? inheritBabyTraits(parents) : rollBalancedTraits();
   const lifeStage: LifeStage = kind === 'birth' ? 'infant' : Math.random() < 0.15 ? 'elder' : 'adult';
   const hairColor = lifeStage === 'elder' ? '#B9B5AE' : pickRandom(HAIR_COLORS);
   const attitudePool: TravelerAttitude[] = ['warm', 'humble', 'boisterous', 'aloof', 'restless'];
@@ -931,6 +1236,7 @@ export const CONCEPT_LABELS: Record<string, string> = {
   berry_bush: 'Wild Berries',
   branch_pile: 'Dry Kindling',
   flint_pile: 'Sharp Flint',
+  stone_boulder: 'Mossy Boulders',
   tree: 'Living Timber',
   spring: 'Fresh Spring',
   wildlife: 'Wild Fauna',
