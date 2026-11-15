@@ -295,6 +295,7 @@ export default function App() {
       setSelectedVillagerId(firstId);
       setSelectedUnitIds(firstId ? new Set([firstId]) : new Set());
       setSelectedAnimal(null);
+      resetCameraToIsland(worldRef.current.localHomeIslandId ?? 'cradle');
       syncHud();
     } else {
       applyCatchUpIfNeeded();
@@ -457,10 +458,11 @@ export default function App() {
     setPlacingSuggestion(null);
     const saved = loadWorldFromStorage();
     worldRef.current = saved ?? createInitialWorld(selectedMode);
+    resetCameraToIsland(worldRef.current.localHomeIslandId ?? 'cradle');
     setHasSavedVillage(Boolean(saved));
     setPhase('TITLE_MENU');
     syncHud();
-  }, [selectedMode, syncHud]);
+  }, [resetCameraToIsland, selectedMode, syncHud]);
 
   useEffect(() => {
     return () => {

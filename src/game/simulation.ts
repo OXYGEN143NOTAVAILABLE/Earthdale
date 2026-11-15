@@ -1,8 +1,10 @@
 import {
   ALL_SKILL_IDS,
+  applyArchipelagoSeed,
   buildBioFromTraits,
   COMFORT_LABELS,
   CURRENT_WORLD_VERSION,
+  DEFAULT_WORLD_SEED,
   ERA_LABELS,
   generateCandidate,
   getIslandAtPoint,
@@ -14,6 +16,7 @@ import {
   ISLAND_DEFS,
   ISLAND_ORDER,
   isPointInsideIsland,
+  mulberry32,
   pickFavoriteComfort,
   pickRandomWish,
   PLAYER_VILLAGE_ISLANDS,
@@ -29,7 +32,12 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './catalog';
-import { buildArchipelagoLandmarks } from './lowPolyWorld';
+import {
+  buildArchipelagoLandmarks,
+  pondDepthAtSim,
+  riverDepthAtSim,
+  terrainSlopeAtSim,
+} from './lowPolyWorld';
 import {
   addToVillagerInventory,
   canBuildCottage,
@@ -607,182 +615,234 @@ export function getVillagePopulation(world: WorldState, islandId: IslandId): num
   );
 }
 
-function buildInitialWildNodes(): WildNodeEntity[] {
+function resolveLandPoint(
+  islandId: IslandId,
+  tx: number,
+  ty: number,
+  minCenterDist = 0,
+): { x: number; y: number } {
+  const isl = ISLAND_DEFS[islandId];
+  const isOk = (wx: number, wy: number) => {
+    const nd = islandNormalizedDist(isl, wx, wy);
+    if (nd > 0.85) return false;
+    if (Math.hypot(wx - isl.centerX, wy - isl.centerY) < minCenterDist) return false;
+    if (classifyMainWorldTerrain({ bridges: [] }, wx, wy) !== 'land') return false;
+    if (riverDepthAtSim(isl, wx, wy).depth > 0.14) return false;
+    if (pondDepthAtSim(isl, wx, wy).inPond) return false;
+    if (terrainSlopeAtSim(wx, wy) > 0.45) return false;
+    return true;
+  };
+  if (isOk(tx, ty)) return { x: Math.round(tx), y: Math.round(ty) };
+  const baseAng = Math.atan2(ty - isl.centerY, tx - isl.centerX);
+  const baseFrac = Math.min(
+    0.72,
+    Math.max(0.12, Math.hypot((tx - isl.centerX) / isl.radiusX, (ty - isl.centerY) / isl.radiusY)),
+  );
+  for (let ring = 0; ring < 5; ring++) {
+    const frac = Math.min(0.8, Math.max(0.08, baseFrac + (ring % 2 === 0 ? -0.1 : 0.1) * Math.ceil(ring / 2)));
+    for (let step = 0; step < 20; step++) {
+      const ang = baseAng + (step % 2 === 0 ? 1 : -1) * Math.ceil(step / 2) * 0.28;
+      const wobble = islandCoastWobble(isl, ang);
+      const cx = isl.centerX + Math.cos(ang) * isl.radiusX * frac * wobble;
+      const cy = isl.centerY + Math.sin(ang) * isl.radiusY * frac * wobble;
+      if (isOk(cx, cy)) return { x: Math.round(cx), y: Math.round(cy) };
+    }
+  }
+  return { x: Math.round(isl.centerX), y: Math.round(isl.centerY) };
+}
+
+function buildInitialWildNodes(worldSeed: number): WildNodeEntity[] {
   const nodes: WildNodeEntity[] = [];
   let idx = 0;
-  const addNode = (
+  const rng = mulberry32((Math.floor(Math.abs(worldSeed)) || DEFAULT_WORLD_SEED) ^ 0x9e3779b9);
+
+  const isValidNodeSpot = (
     islandId: IslandId,
     kind: WildNodeEntity['kind'],
-    dx: number,
-    dy: number,
-    amount: number,
-    variant?: WildNodeEntity['variant'],
-    scale = 1,
-  ) => {
+    wx: number,
+    wy: number,
+  ): boolean => {
     const isl = ISLAND_DEFS[islandId];
-    const x = isl.centerX + dx;
-    const y = isl.centerY + dy;
-    nodes.push({
-      id: `node_${idx++}`,
-      islandId,
-      kind,
-      x,
-      y,
-      amount,
-      maxAmount: amount,
-      variant,
-      scale,
-    });
+    const nd = islandNormalizedDist(isl, wx, wy);
+    if (nd > (kind === 'tree' ? 0.87 : 0.81)) return false;
+    if (classifyMainWorldTerrain({ bridges: [] }, wx, wy) !== 'land') return false;
+    if (riverDepthAtSim(isl, wx, wy).depth > 0.12) return false;
+    if (pondDepthAtSim(isl, wx, wy).depth > 0.12) return false;
+    if (terrainSlopeAtSim(wx, wy) > 0.43) return false;
+
+    const minCenterDist = kind === 'tree' || kind === 'stone_boulder' ? 92 : 72;
+    if (Math.hypot(wx - isl.centerX, wy - isl.centerY) < minCenterDist) return false;
+
+    if (isl.hasSpring && isl.springOffset) {
+      const sx = isl.centerX + isl.springOffset.dx;
+      const sy = isl.centerY + isl.springOffset.dy;
+      if (Math.hypot(wx - sx, wy - sy) < 64) return false;
+    }
+
+    if (Math.hypot(wx - isl.dockSpot.x, wy - isl.dockSpot.y) < 88) return false;
+
+    const minNodeSep = kind === 'tree' || kind === 'stone_boulder' ? 42 : 30;
+    for (let i = 0; i < nodes.length; i++) {
+      const other = nodes[i];
+      if (other.islandId !== islandId) continue;
+      const req = other.kind === 'tree' || other.kind === 'stone_boulder' ? Math.max(minNodeSep, 40) : minNodeSep;
+      if (Math.hypot(wx - other.x, wy - other.y) < req) return false;
+    }
+    return true;
   };
 
-  // Cradle Isle: scarce berries, branches, stone boulders, flint & tall scattered pines/oaks
-  addNode('cradle', 'berry_bush', -160, 88, 18);
-  addNode('cradle', 'berry_bush', 135, -135, 18);
-  addNode('cradle', 'berry_bush', 195, 125, 16);
-  addNode('cradle', 'branch_pile', -235, 118, 22);
-  addNode('cradle', 'branch_pile', 105, 195, 22);
-  addNode('cradle', 'flint_pile', -100, -195, 18);
-  addNode('cradle', 'stone_boulder', 190, -55, 34, undefined, 1.15);
-  addNode('cradle', 'stone_boulder', -215, -105, 32, undefined, 1.05);
-  for (const [dx, dy, v, s] of [
-    [-340, -140, 'pine', 2.05],
-    [-315, 160, 'oak', 1.92],
-    [-185, 250, 'pine', 1.85],
-    [300, -205, 'oak', 2.0],
-    [335, 165, 'pine', 1.9],
-    [-30, -265, 'oak', 1.88],
-    [-415, 25, 'pine', 2.15],
-    [380, -45, 'oak', 1.8],
-    [-110, -305, 'pine', 1.95],
-    [235, 245, 'oak', 1.85],
-  ] as [number, number, 'pine' | 'oak', number][]) {
-    addNode('cradle', 'tree', dx, dy, 48, v, s);
-  }
+  const spawnSeededNodes = (
+    islandId: IslandId,
+    kind: WildNodeEntity['kind'],
+    count: number,
+    radMin: number,
+    radMax: number,
+    amount: number,
+    variants?: WildNodeEntity['variant'][],
+    scaleMin = 1,
+    scaleMax = 1,
+    groveCenters?: number[],
+  ) => {
+    const isl = ISLAND_DEFS[islandId];
+    for (let i = 0; i < count; i++) {
+      let chosenX: number | null = null;
+      let chosenY: number | null = null;
 
-  // Timbercrown Ridge: steep cliffside forest, scarce berries, stone boulders & towering cedars
-  addNode('timbercrown', 'berry_bush', -145, 110, 18);
-  addNode('timbercrown', 'berry_bush', 165, -80, 16);
-  addNode('timbercrown', 'branch_pile', 145, 125, 26);
-  addNode('timbercrown', 'flint_pile', -195, -125, 20);
-  addNode('timbercrown', 'stone_boulder', 110, 175, 38, undefined, 1.25);
-  addNode('timbercrown', 'stone_boulder', -230, 35, 34, undefined, 1.1);
-  for (const [dx, dy, v, s] of [
-    [-305, -110, 'cedar', 2.65],
-    [-235, 175, 'pine', 2.3],
-    [-55, -225, 'cedar', 2.55],
-    [245, -155, 'pine', 2.25],
-    [295, 95, 'cedar', 2.45],
-    [75, 195, 'pine', 2.1],
-    [-345, 40, 'cedar', 2.4],
-    [-145, -40, 'pine', 2.05],
-    [145, -230, 'cedar', 2.35],
-  ] as [number, number, 'cedar' | 'pine', number][]) {
-    addNode('timbercrown', 'tree', dx, dy, 62, v, s);
-  }
+      for (let attempt = 0; attempt < 42; attempt++) {
+        let ang: number;
+        let rad: number;
+        if (groveCenters && groveCenters.length > 0 && attempt < 26) {
+          const baseGrove = groveCenters[i % groveCenters.length];
+          ang = baseGrove + (rng() - 0.5) * 0.92;
+          rad = radMin + rng() * (radMax - radMin);
+        } else {
+          ang = rng() * Math.PI * 2;
+          rad = radMin + rng() * (radMax - radMin);
+        }
+        const wob = islandCoastWobble(isl, ang);
+        const cx = Math.round(isl.centerX + Math.cos(ang) * isl.radiusX * rad * wob);
+        const cy = Math.round(isl.centerY + Math.sin(ang) * isl.radiusY * rad * wob);
+        if (isValidNodeSpot(islandId, kind, cx, cy)) {
+          chosenX = cx;
+          chosenY = cy;
+          break;
+        }
+      }
 
-  // Sun-Terrace Isle: expansive river-cut valley with scattered berry thickets, boulders & apple orchards
-  addNode('sunterrace', 'berry_bush', -215, -125, 22);
-  addNode('sunterrace', 'berry_bush', 225, 115, 22);
-  addNode('sunterrace', 'branch_pile', -275, 155, 24);
-  addNode('sunterrace', 'flint_pile', 150, -205, 18);
-  addNode('sunterrace', 'stone_boulder', -115, 210, 34, undefined, 1.1);
-  addNode('sunterrace', 'stone_boulder', 295, -90, 32, undefined, 1.0);
-  for (const [dx, dy, v, s] of [
-    [-395, -175, 'orchard', 2.05],
-    [-360, 195, 'oak', 1.98],
-    [325, -215, 'orchard', 2.15],
-    [385, 165, 'orchard', 1.95],
-    [55, 285, 'oak', 1.9],
-    [-95, -265, 'orchard', 1.88],
-    [455, -45, 'orchard', 2.0],
-  ] as [number, number, 'orchard' | 'oak', number][]) {
-    addNode('sunterrace', 'tree', dx, dy, 48, v, s);
-  }
+      if (chosenX === null || chosenY === null) continue;
+      const variant = variants && variants.length > 0 ? variants[i % variants.length] : undefined;
+      const sc = Number((scaleMin + rng() * (scaleMax - scaleMin)).toFixed(2));
+      nodes.push({
+        id: `node_${idx++}`,
+        islandId,
+        kind,
+        x: chosenX,
+        y: chosenY,
+        amount,
+        maxAmount: amount,
+        variant,
+        scale: sc,
+      });
+    }
+  };
 
-  // Copper-Crag Spire: scarce timber, rich stone boulders & copper/iron veins
-  addNode('coppercrag', 'copper_vein', -145, -80, 72);
-  addNode('coppercrag', 'copper_vein', 135, -95, 72);
-  addNode('coppercrag', 'iron_vein', -30, 125, 68);
-  addNode('coppercrag', 'iron_vein', 165, 75, 68);
-  addNode('coppercrag', 'stone_boulder', -200, 60, 46, undefined, 1.3);
-  addNode('coppercrag', 'flint_pile', 105, -155, 28);
-  for (const [dx, dy, v, s] of [
-    [-255, -115, 'pine', 1.82],
-    [245, -125, 'pine', 1.78],
-    [85, 165, 'pine', 1.75],
-  ] as [number, number, 'pine', number][]) {
-    addNode('coppercrag', 'tree', dx, dy, 38, v, s);
-  }
+  const makeGroves = (numGroves: number): number[] => {
+    const startAng = rng() * Math.PI * 2;
+    const angles: number[] = [];
+    for (let g = 0; g < numGroves; g++) {
+      angles.push(startAng + (g / numGroves) * Math.PI * 2 + (rng() - 0.5) * 0.5);
+    }
+    return angles;
+  };
 
-  // Outer Mist Atoll: compact coral reef with coastal oaks, stone & flint
-  addNode('mistatoll', 'berry_bush', -85, 105, 16);
-  addNode('mistatoll', 'flint_pile', 115, -95, 22);
-  addNode('mistatoll', 'stone_boulder', -115, -65, 28, undefined, 0.95);
-  for (const [dx, dy, v, s] of [
-    [165, -85, 'oak', 1.92],
-    [175, 95, 'oak', 1.85],
-    [-135, -130, 'pine', 1.8],
-  ] as [number, number, 'oak' | 'pine', number][]) {
-    addNode('mistatoll', 'tree', dx, dy, 40, v, s);
-  }
+  // Cradle Isle: sunlit meadow bordered by organic oak/pine woodland groves, scarce flint, stones & berries
+  const cradleGroves = makeGroves(4);
+  spawnSeededNodes('cradle', 'berry_bush', 3, 0.24, 0.52, 18);
+  spawnSeededNodes('cradle', 'branch_pile', 2, 0.28, 0.58, 22);
+  spawnSeededNodes('cradle', 'flint_pile', 1, 0.30, 0.56, 18);
+  spawnSeededNodes('cradle', 'stone_boulder', 2, 0.32, 0.62, 33, undefined, 1.02, 1.18);
+  spawnSeededNodes('cradle', 'tree', 24, 0.36, 0.78, 48, ['oak', 'pine', 'cedar', 'oak'], 1.75, 2.32, cradleGroves);
 
-  // Starbloom Ruins: sanctuary island with berries, boulders, ancient oaks & copper
-  addNode('starbloom', 'berry_bush', -160, -65, 22);
-  addNode('starbloom', 'berry_bush', 165, 85, 22);
-  addNode('starbloom', 'branch_pile', -85, 195, 26);
-  addNode('starbloom', 'stone_boulder', 205, -105, 36, undefined, 1.15);
-  addNode('starbloom', 'copper_vein', -230, 135, 52);
-  for (const [dx, dy, v, s] of [
-    [-290, -95, 'oak', 2.25],
-    [255, -165, 'orchard', 2.05],
-    [-215, 210, 'pine', 2.15],
-    [275, 135, 'oak', 2.1],
-    [40, -255, 'cedar', 2.3],
-    [-335, 55, 'orchard', 1.95],
-  ] as [number, number, 'oak' | 'orchard' | 'pine' | 'cedar', number][]) {
-    addNode('starbloom', 'tree', dx, dy, 52, v, s);
-  }
+  // Timbercrown Cliffside: dense highland cedar & pine forest, scarce boulders & berries
+  const timberGroves = makeGroves(3);
+  spawnSeededNodes('timbercrown', 'berry_bush', 2, 0.25, 0.54, 17);
+  spawnSeededNodes('timbercrown', 'branch_pile', 2, 0.30, 0.60, 24);
+  spawnSeededNodes('timbercrown', 'flint_pile', 1, 0.32, 0.58, 20);
+  spawnSeededNodes('timbercrown', 'stone_boulder', 2, 0.34, 0.64, 36, undefined, 1.08, 1.25);
+  spawnSeededNodes('timbercrown', 'tree', 22, 0.34, 0.78, 62, ['cedar', 'pine', 'cedar'], 2.02, 2.72, timberGroves);
 
-  // Ashen Bastion: volcanic battle island with iron, copper & basalt boulders
-  addNode('embervault', 'iron_vein', -135, -115, 85);
-  addNode('embervault', 'iron_vein', 155, -95, 85);
-  addNode('embervault', 'copper_vein', -175, 105, 75);
-  addNode('embervault', 'stone_boulder', 175, 125, 44, undefined, 1.25);
-  for (const [dx, dy, v, s] of [
-    [-295, -120, 'pine', 1.7],
-    [285, -115, 'pine', 1.65],
-    [-245, 165, 'pine', 1.6],
-  ] as [number, number, 'pine', number][]) {
-    addNode('embervault', 'tree', dx, dy, 35, v, s);
-  }
+  // Sun-Terrace Rivers: fertile multi-river loam with fruit orchards, berry thickets & field boulders
+  const sunGroves = makeGroves(3);
+  spawnSeededNodes('sunterrace', 'berry_bush', 2, 0.28, 0.58, 22);
+  spawnSeededNodes('sunterrace', 'branch_pile', 1, 0.34, 0.62, 24);
+  spawnSeededNodes('sunterrace', 'flint_pile', 1, 0.32, 0.60, 18);
+  spawnSeededNodes('sunterrace', 'stone_boulder', 2, 0.34, 0.65, 33, undefined, 1.0, 1.15);
+  spawnSeededNodes('sunterrace', 'tree', 17, 0.38, 0.76, 48, ['orchard', 'oak', 'pine'], 1.78, 2.22, sunGroves);
 
-  // Frostpeak Glacier: towering alpine massif with alpine boulders, snow cedars & iron veins
-  addNode('frostpeak', 'iron_vein', -145, -100, 80);
-  addNode('frostpeak', 'iron_vein', 155, -70, 80);
-  addNode('frostpeak', 'stone_boulder', -85, 155, 42, undefined, 1.25);
-  addNode('frostpeak', 'branch_pile', 195, 130, 26);
-  for (const [dx, dy, v, s] of [
-    [-255, -125, 'cedar', 2.45],
-    [235, -140, 'cedar', 2.35],
-    [-225, 150, 'pine', 2.2],
-    [250, 115, 'pine', 2.1],
-    [35, -245, 'cedar', 2.5],
-  ] as [number, number, 'cedar' | 'pine', number][]) {
-    addNode('frostpeak', 'tree', dx, dy, 54, v, s);
-  }
+  // Copper-Crag Spire: mineral caldera with scarce pines and abundant copper/iron veins
+  spawnSeededNodes('coppercrag', 'copper_vein', 2, 0.26, 0.58, 72);
+  spawnSeededNodes('coppercrag', 'iron_vein', 2, 0.28, 0.60, 68);
+  spawnSeededNodes('coppercrag', 'stone_boulder', 2, 0.32, 0.62, 44, undefined, 1.15, 1.32);
+  spawnSeededNodes('coppercrag', 'flint_pile', 1, 0.32, 0.56, 28);
+  spawnSeededNodes('coppercrag', 'tree', 3, 0.42, 0.72, 38, ['pine'], 1.7, 1.88);
+
+  // Outer Mist Atoll: compact crescent lagoon rim with coastal oaks, flint & stone
+  spawnSeededNodes('mistatoll', 'berry_bush', 1, 0.32, 0.62, 16);
+  spawnSeededNodes('mistatoll', 'flint_pile', 1, 0.34, 0.62, 22);
+  spawnSeededNodes('mistatoll', 'stone_boulder', 1, 0.34, 0.60, 28, undefined, 0.92, 1.05);
+  spawnSeededNodes('mistatoll', 'tree', 4, 0.38, 0.74, 40, ['oak', 'pine'], 1.78, 1.95);
+
+  // Starbloom Ruins: jade sanctuary with ancient oaks, orchards & copper
+  const starGroves = makeGroves(3);
+  spawnSeededNodes('starbloom', 'berry_bush', 2, 0.26, 0.56, 22);
+  spawnSeededNodes('starbloom', 'branch_pile', 1, 0.32, 0.60, 26);
+  spawnSeededNodes('starbloom', 'stone_boulder', 1, 0.34, 0.62, 36, undefined, 1.08, 1.2);
+  spawnSeededNodes('starbloom', 'copper_vein', 1, 0.40, 0.68, 52);
+  spawnSeededNodes('starbloom', 'tree', 14, 0.36, 0.76, 52, ['oak', 'orchard', 'pine', 'cedar'], 1.85, 2.34, starGroves);
+
+  // Ashen Bastion: volcanic iron fortress island
+  spawnSeededNodes('embervault', 'iron_vein', 2, 0.26, 0.56, 85);
+  spawnSeededNodes('embervault', 'copper_vein', 1, 0.32, 0.62, 75);
+  spawnSeededNodes('embervault', 'stone_boulder', 2, 0.32, 0.64, 44, undefined, 1.12, 1.28);
+  spawnSeededNodes('embervault', 'tree', 3, 0.44, 0.74, 35, ['pine'], 1.58, 1.74);
+
+  // Frostpeak Massif: alpine glacier ridges, iron veins & frost cedars
+  const frostGroves = makeGroves(2);
+  spawnSeededNodes('frostpeak', 'iron_vein', 2, 0.28, 0.56, 80);
+  spawnSeededNodes('frostpeak', 'stone_boulder', 2, 0.32, 0.62, 42, undefined, 1.12, 1.28);
+  spawnSeededNodes('frostpeak', 'branch_pile', 1, 0.34, 0.64, 26);
+  spawnSeededNodes('frostpeak', 'tree', 12, 0.38, 0.74, 54, ['cedar', 'pine'], 2.0, 2.54, frostGroves);
 
   return nodes;
 }
 
-function buildInitialExploreRuins(): ExploreRuinEntity[] {
+function buildInitialExploreRuins(worldSeed: number): ExploreRuinEntity[] {
+  const rng = mulberry32((Math.floor(Math.abs(worldSeed)) || DEFAULT_WORLD_SEED) + 313);
+  const place = (id: IslandId, rFrac: number) => {
+    const isl = ISLAND_DEFS[id];
+    const ang = rng() * Math.PI * 2;
+    const wob = islandCoastWobble(isl, ang);
+    return resolveLandPoint(
+      id,
+      isl.centerX + Math.cos(ang) * isl.radiusX * rFrac * wob,
+      isl.centerY + Math.sin(ang) * isl.radiusY * rFrac * wob,
+      rFrac > 0.18 ? 110 : 0,
+    );
+  };
+  const sunPt = place('sunterrace', 0.32);
+  const starPt = place('starbloom', 0.14);
+  const timberPt = place('timbercrown', 0.36);
+  const frostPt = place('frostpeak', 0.18);
+  const emberPt = place('embervault', 0.14);
+
   return [
     {
       id: 'ruin_sun_obelisk',
       name: 'Sun-Terrace Solarium',
       islandId: 'sunterrace',
       kind: 'sun_obelisk',
-      x: ISLAND_DEFS.sunterrace.centerX + 125,
-      y: ISLAND_DEFS.sunterrace.centerY - 125,
+      x: sunPt.x,
+      y: sunPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: '+Wheat Seeds, Honey & Lore',
@@ -793,8 +853,8 @@ function buildInitialExploreRuins(): ExploreRuinEntity[] {
       name: 'Starbloom Observatory',
       islandId: 'starbloom',
       kind: 'star_observatory',
-      x: ISLAND_DEFS.starbloom.centerX - 15,
-      y: ISLAND_DEFS.starbloom.centerY - 10,
+      x: starPt.x,
+      y: starPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: '+Hearthlight Relics, Herbs & Lore',
@@ -805,8 +865,8 @@ function buildInitialExploreRuins(): ExploreRuinEntity[] {
       name: 'Whispering Cedar Totem',
       islandId: 'timbercrown',
       kind: 'cedar_totem',
-      x: ISLAND_DEFS.timbercrown.centerX - 240,
-      y: ISLAND_DEFS.timbercrown.centerY + 115,
+      x: timberPt.x,
+      y: timberPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: '+Timber, Tea & Lore',
@@ -817,8 +877,8 @@ function buildInitialExploreRuins(): ExploreRuinEntity[] {
       name: 'Frostpeak Star-Shrine',
       islandId: 'frostpeak',
       kind: 'frost_shrine',
-      x: ISLAND_DEFS.frostpeak.centerX + 20,
-      y: ISLAND_DEFS.frostpeak.centerY - 25,
+      x: frostPt.x,
+      y: frostPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: '+Iron, Hearthlight & Crystal Lore',
@@ -829,8 +889,8 @@ function buildInitialExploreRuins(): ExploreRuinEntity[] {
       name: 'Ashen Iron Vault',
       islandId: 'embervault',
       kind: 'ashen_vault',
-      x: ISLAND_DEFS.embervault.centerX + 10,
-      y: ISLAND_DEFS.embervault.centerY - 15,
+      x: emberPt.x,
+      y: emberPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: '+Heavy Iron, Bronze & War Spoils',
@@ -839,49 +899,42 @@ function buildInitialExploreRuins(): ExploreRuinEntity[] {
   ];
 }
 
-function buildInitialWildHerds(): WildHerdEntity[] {
+function buildInitialWildHerds(worldSeed: number): WildHerdEntity[] {
   const herds: WildHerdEntity[] = [];
+  const rng = mulberry32((Math.floor(Math.abs(worldSeed)) || DEFAULT_WORLD_SEED) + 521);
   const spawn = (
     id: string,
     kind: WildHerdEntity['kind'],
     islandId: IslandId,
-    dx: number,
-    dy: number,
     color: string,
   ) => {
     const isl = ISLAND_DEFS[islandId];
-    let sx = isl.centerX + dx;
-    let sy = isl.centerY + dy;
-    if (classifyMainWorldTerrain({ bridges: [] }, sx, sy) === 'deep_water') {
-      for (let step = 1; step <= 12; step++) {
-        const ang = (step / 12) * Math.PI * 2;
-        const rScale = step <= 6 ? 0.45 : 0.25;
-        const cx = isl.centerX + Math.cos(ang) * isl.radiusX * rScale;
-        const cy = isl.centerY + Math.sin(ang) * isl.radiusY * rScale;
-        if (classifyMainWorldTerrain({ bridges: [] }, cx, cy) !== 'deep_water') {
-          sx = Math.round(cx);
-          sy = Math.round(cy);
-          break;
-        }
-      }
-    }
+    const ang = rng() * Math.PI * 2;
+    const rad = 0.24 + rng() * 0.42;
+    const wob = islandCoastWobble(isl, ang);
+    const pos = resolveLandPoint(
+      islandId,
+      isl.centerX + Math.cos(ang) * isl.radiusX * rad * wob,
+      isl.centerY + Math.sin(ang) * isl.radiusY * rad * wob,
+      70,
+    );
     const scale =
       kind === 'boar'
-        ? Number((0.95 + Math.random() * 0.37).toFixed(2))
+        ? Number((0.95 + rng() * 0.37).toFixed(2))
         : kind === 'deer'
-          ? Number((0.92 + Math.random() * 0.34).toFixed(2))
-          : Number((0.76 + Math.random() * 0.28).toFixed(2));
+          ? Number((0.92 + rng() * 0.34).toFixed(2))
+          : Number((0.76 + rng() * 0.28).toFixed(2));
     const hp = Math.round((kind === 'boar' ? 58 : kind === 'deer' ? 32 : 14) * scale);
     herds.push({
       id,
       kind,
       islandId,
-      x: sx,
-      y: sy,
-      targetX: sx + 35,
-      targetY: sy,
+      x: pos.x,
+      y: pos.y,
+      targetX: pos.x + 35,
+      targetY: pos.y,
       facing: 1,
-      pauseTimer: Math.random() * 2,
+      pauseTimer: rng() * 2,
       hp,
       maxHp: hp,
       aggroTargetId: null,
@@ -890,37 +943,37 @@ function buildInitialWildHerds(): WildHerdEntity[] {
     });
   };
 
-  // Cradle Isle: rabbits & deer roaming the wide meadow
-  spawn('wild_r1', 'rabbit', 'cradle', -170, 140, '#E5DDD0');
-  spawn('wild_r2', 'rabbit', 'cradle', 210, -85, '#C8B094');
-  spawn('wild_r4', 'rabbit', 'cradle', 95, 220, '#DDD2C2');
-  spawn('wild_d1', 'deer', 'cradle', -290, -110, '#A67249');
-  spawn('wild_d5', 'deer', 'cradle', 295, 110, '#9E683E');
+  // Cradle Isle: rabbits & deer roaming the sunlit meadow
+  spawn('wild_r1', 'rabbit', 'cradle', '#E5DDD0');
+  spawn('wild_r2', 'rabbit', 'cradle', '#C8B094');
+  spawn('wild_r4', 'rabbit', 'cradle', '#DDD2C2');
+  spawn('wild_d1', 'deer', 'cradle', '#A67249');
+  spawn('wild_d5', 'deer', 'cradle', '#9E683E');
 
   // Timbercrown Ridge: deer & dangerous wild boars
-  spawn('wild_d2', 'deer', 'timbercrown', -145, -95, '#9E683E');
-  spawn('wild_d3', 'deer', 'timbercrown', 175, 115, '#A67249');
-  spawn('wild_b1', 'boar', 'timbercrown', 55, -165, '#5E463A');
-  spawn('wild_b2', 'boar', 'timbercrown', -210, 135, '#4D382E');
+  spawn('wild_d2', 'deer', 'timbercrown', '#9E683E');
+  spawn('wild_d3', 'deer', 'timbercrown', '#A67249');
+  spawn('wild_b1', 'boar', 'timbercrown', '#5E463A');
+  spawn('wild_b2', 'boar', 'timbercrown', '#4D382E');
 
-  // Sun-Terrace Isle: rabbits & deer
-  spawn('wild_r3', 'rabbit', 'sunterrace', 105, -135, '#D4C7B8');
-  spawn('wild_d4', 'deer', 'sunterrace', -165, 85, '#B07B52');
-  spawn('wild_d6', 'deer', 'sunterrace', 240, 160, '#A67249');
+  // Sun-Terrace Rivers: rabbits & deer
+  spawn('wild_r3', 'rabbit', 'sunterrace', '#D4C7B8');
+  spawn('wild_d4', 'deer', 'sunterrace', '#B07B52');
+  spawn('wild_d6', 'deer', 'sunterrace', '#A67249');
 
   // Copper-Crag: mountain boar
-  spawn('wild_b3', 'boar', 'coppercrag', 95, -45, '#56433B');
+  spawn('wild_b3', 'boar', 'coppercrag', '#56433B');
 
   // Starbloom Ruins: deer & rabbits
-  spawn('wild_r5', 'rabbit', 'starbloom', 110, 95, '#EAE2D6');
-  spawn('wild_d7', 'deer', 'starbloom', 165, -95, '#A67249');
+  spawn('wild_r5', 'rabbit', 'starbloom', '#EAE2D6');
+  spawn('wild_d7', 'deer', 'starbloom', '#A67249');
 
-  // Frostpeak Glacier: white-pelt deer & fierce mountain boar
-  spawn('wild_d8', 'deer', 'frostpeak', -120, 105, '#D8DEE6');
-  spawn('wild_b4', 'boar', 'frostpeak', 145, -60, '#5B5654');
+  // Frostpeak Massif: white-pelt deer & fierce mountain boar
+  spawn('wild_d8', 'deer', 'frostpeak', '#D8DEE6');
+  spawn('wild_b4', 'boar', 'frostpeak', '#5B5654');
 
   // Ashen Bastion: scorched boar
-  spawn('wild_b5', 'boar', 'embervault', 135, -75, '#3C2D28');
+  spawn('wild_b5', 'boar', 'embervault', '#3C2D28');
 
   return herds;
 }
@@ -1083,6 +1136,7 @@ function makeNativeClanVillager(
   const stats = rollUnitStats(traits, isAshen);
   const skills = rollStarterSkills('adult', isAshen);
   const maxHp = isAshen ? 105 : 115;
+  const spawnPos = resolveLandPoint(islandId, isl.centerX + dx, isl.centerY + dy);
   return {
     id,
     name,
@@ -1149,10 +1203,10 @@ function makeNativeClanVillager(
     autonomyReason: `Gathering & building ${CULTURES[cultureId].name} life on ${isl.name}.`,
     thoughtBubble: null,
     thoughtTimer: 0,
-    x: isl.centerX + dx,
-    y: isl.centerY + dy,
-    targetX: isl.centerX + dx * 0.5,
-    targetY: isl.centerY + dy * 0.5,
+    x: spawnPos.x,
+    y: spawnPos.y,
+    targetX: spawnPos.x,
+    targetY: spawnPos.y,
     facing: 1,
     animPhase: Math.random() * 6,
     bounceScale: 1,
@@ -1160,7 +1214,7 @@ function makeNativeClanVillager(
     birthCooldownDays: 99,
     attackCooldown: 0,
     edgeAckCooldown: 0,
-    stuckState: { lastX: isl.centerX + dx, lastY: isl.centerY + dy, timer: 0, detourSign: 1 },
+    stuckState: { lastX: spawnPos.x, lastY: spawnPos.y, timer: 0, detourSign: 1 },
     personality: buildNpcPersonality(id, traits, 0.55, 0.72, isAshen),
     knowledge: createKnowledgeProfile('native'),
     memories: [
@@ -1579,10 +1633,24 @@ function buildNativeOutposts(): {
     makeBastionGuard('ash_guard_3', 'Pyra Ember', -12, 85),
   ];
 
+  const landCheck = (id: IslandId, x: number, y: number) => resolveLandPoint(id, x, y);
+  for (const b of buildings) {
+    if (b.type === 'dock') continue;
+    const p = landCheck(b.islandId, b.x, b.y);
+    b.x = p.x;
+    b.y = p.y;
+  }
+
   return { buildings, boats, clanVillagers, raiders };
 }
 
-export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldState {
+export function createInitialWorld(gameMode: GameMode = 'whisper_solo', seed?: number): WorldState {
+  const worldSeed =
+    typeof seed === 'number' && Number.isFinite(seed) && seed > 0
+      ? Math.floor(seed)
+      : Math.floor(1 + Math.random() * 2_147_483_640) || DEFAULT_WORLD_SEED;
+  applyArchipelagoSeed(worldSeed);
+
   const isSiege = gameMode === 'shared_siege';
   const isSovereign = gameMode === 'sovereign_sandbox';
 
@@ -1784,6 +1852,7 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
 
   const world: WorldState = {
     version: CURRENT_WORLD_VERSION,
+    worldSeed,
     gameMode,
     era: 1,
     localHomeIslandId: 'cradle',
@@ -1811,16 +1880,16 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
     bridges: INITIAL_SKY_BRIDGES.map((b) => ({ ...b })),
     cableways: INITIAL_SKY_CABLEWAYS.map((c) => ({ ...c })),
     gliders: [],
-    exploreRuins: buildInitialExploreRuins(),
+    exploreRuins: buildInitialExploreRuins(worldSeed),
     projectiles: [],
-    wildNodes: buildInitialWildNodes(),
+    wildNodes: buildInitialWildNodes(worldSeed),
     villagers: initialVillagers,
     clanVillagers: isSiege ? [] : [...outpost.clanVillagers],
     raiders: isSiege ? [] : [...outpost.raiders],
     buildings: startingBuildings,
     placedSuggestions: [],
     livestock: [],
-    wildHerds: buildInitialWildHerds(),
+    wildHerds: buildInitialWildHerds(worldSeed),
     boats: isSovereign ? [...outpost.boats] : [],
     memorials: [],
     diplomacy: {
@@ -1948,10 +2017,16 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
 }
 
 export function normalizeWorldState(raw: WorldState): WorldState {
-  const base = createInitialWorld(raw.gameMode ?? 'whisper_solo');
+  const seed =
+    typeof raw.worldSeed === 'number' && Number.isFinite(raw.worldSeed) && raw.worldSeed > 0
+      ? Math.floor(raw.worldSeed)
+      : DEFAULT_WORLD_SEED;
+  applyArchipelagoSeed(seed);
+  const base = createInitialWorld(raw.gameMode ?? 'whisper_solo', seed);
   const merged: WorldState = {
     ...base,
     ...raw,
+    worldSeed: seed,
     gameMode: raw.gameMode ?? 'whisper_solo',
     localHomeIslandId: raw.localHomeIslandId ?? 'cradle',
     islandOwners: { ...base.islandOwners, ...(raw.islandOwners ?? {}) },
@@ -7297,6 +7372,7 @@ export function createHudSnapshot(world: WorldState, viewerIslandId?: IslandId):
   const homePop = world.villagers.filter((v) => (v.homeIslandId ?? v.islandId) === homeId).length;
   return {
     gameMode: world.gameMode,
+    worldSeed: world.worldSeed,
     era: world.era,
     localHomeIslandId: homeId,
     islandOwners: { ...(world.islandOwners ?? {}) } as Record<IslandId, string | null>,

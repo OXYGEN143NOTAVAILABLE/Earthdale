@@ -57,14 +57,42 @@ export function VillagerPortrait({
         <rect width="48" height="48" fill={`url(#sky_${uid})`} />
         <path d="M0 38 Q16 31 32 36 T48 34 L48 48 L0 48 Z" fill="#2A3B38" opacity="0.85" />
 
-        <path
-          d="M6 48 C8 35 16 33 24 33 C32 33 40 35 42 48 Z"
-          fill={cloakColor}
-          stroke={INK}
-          strokeWidth="1.4"
-        />
-        {!isInfant && (
-          <path d="M17 34 L24 39.5 L31 34" fill="#F5EDE0" stroke={INK} strokeWidth="1.2" strokeLinejoin="round" />
+        {activeTask === 'guard' && canGear ? (
+          <g>
+            {/* Light guard shoulder pads & leather/steel tunic */}
+            <path d="M6 48 C7 35 13 32 18 33 L18 48 Z" fill="#8C9084" stroke={INK} strokeWidth="1.2" />
+            <path d="M42 48 C41 35 35 32 30 33 L30 48 Z" fill="#8C9084" stroke={INK} strokeWidth="1.2" />
+            <path d="M12 48 C13 35 19 33 24 33 C29 33 35 35 36 48 Z" fill="#999C90" stroke={INK} strokeWidth="1.3" />
+            <path d="M18 33 L24 37.5 L30 33" fill={cloakColor} stroke={INK} strokeWidth="1.1" strokeLinejoin="round" />
+          </g>
+        ) : (
+          <g>
+            <path
+              d="M6 48 C8 35 16 33 24 33 C32 33 40 35 42 48 Z"
+              fill={cloakColor}
+              stroke={INK}
+              strokeWidth="1.4"
+            />
+            {!isInfant && (
+              <>
+                {(activeTask === 'bake' || activeTask === 'smelt' || style === 1) && (
+                  <path
+                    d="M16 36 L32 36 L34 48 L14 48 Z"
+                    fill={activeTask === 'smelt' ? '#7D5C47' : '#EFE7D6'}
+                    stroke={INK}
+                    strokeWidth="1.1"
+                  />
+                )}
+                {style === 2 && (
+                  <path d="M17 34 L24 41 L31 34 L31 48 L17 48 Z" fill="#F2E9D8" stroke={INK} strokeWidth="1.1" />
+                )}
+                {style === 3 && (
+                  <path d="M10 40 Q24 44 38 40 L35 34 Q24 36 13 34 Z" fill="#7D8E75" stroke={INK} strokeWidth="1.1" />
+                )}
+                <path d="M17 34 L24 39.5 L31 34" fill="#F5EDE0" stroke={INK} strokeWidth="1.2" strokeLinejoin="round" />
+              </>
+            )}
+          </g>
         )}
 
         {isChief && (
@@ -78,6 +106,7 @@ export function VillagerPortrait({
           <g>
             <ellipse cx="24" cy="34.5" rx="13" ry="9.5" fill={cloakColor} stroke={INK} strokeWidth="1.4" />
             <circle cx="24" cy={cy} r={headR} fill={skinTone} stroke={INK} strokeWidth="1.4" />
+            <path d="M23.5 14 C22 10 27 10 25.5 14" fill={hairColor} stroke={INK} strokeWidth="1" />
           </g>
         ) : (
           <g>
@@ -91,42 +120,71 @@ export function VillagerPortrait({
             )}
             {style === 2 && (
               <g fill={hairColor} stroke={INK} strokeWidth="1.1">
-                <circle cx="12.5" cy="27" r="3.4" />
-                <circle cx="35.5" cy="27" r="3.4" />
+                <circle cx="12.5" cy="24" r="3.8" />
+                <circle cx="35.5" cy="24" r="3.8" />
               </g>
             )}
 
             <rect x="21" y="30" width="6" height="5" fill={skinTone} stroke={INK} strokeWidth="1.1" />
+            <circle cx="13" cy={cy + 1.2} r="2.2" fill={skinTone} stroke={INK} strokeWidth="1.1" />
+            <circle cx="35" cy={cy + 1.2} r="2.2" fill={skinTone} stroke={INK} strokeWidth="1.1" />
             <circle cx="24" cy={cy} r={headR} fill={skinTone} stroke={INK} strokeWidth="1.4" />
 
+            {/* Sculpted chibi fringe bangs matching 3D hair */}
             <path
-              d={`M${24 - headR} 21 C${24 - headR} 11 ${24 + headR} 11 ${24 + headR} 21 Q27 16 24 19 Q19 16 ${24 - headR} 21 Z`}
+              d={
+                style === 0
+                  ? `M${24 - headR} 21 C${24 - headR} 10.5 ${24 + headR} 10.5 ${24 + headR} 21 L32.5 18 L29.5 20.2 L26.5 17.5 L24 20.5 L20.8 17.4 L17.5 20 Z`
+                  : `M${24 - headR} 21 C${24 - headR} 11 ${24 + headR} 11 ${24 + headR} 21 Q27 16 24 19 Q19 16 ${24 - headR} 21 Z`
+              }
               fill={hairColor}
               stroke={INK}
               strokeWidth="1.2"
+              strokeLinejoin="round"
             />
           </g>
         )}
 
-        <circle cx="17.2" cy={cy + 2.5} r="2.1" fill="#E5897D" opacity="0.38" />
-        <circle cx="30.8" cy={cy + 2.5} r="2.1" fill="#E5897D" opacity="0.38" />
-        <circle cx="20" cy={cy + 0.5} r="1.45" fill={INK} />
-        <circle cx="28" cy={cy + 0.5} r="1.45" fill={INK} />
+        {/* Expressive anime/chibi eyes + matching eyebrows */}
+        {[19.4, 28.6].map((ex, idx) => (
+          <g key={idx}>
+            <line
+              x1={ex - 2.3}
+              y1={cy - 3.3}
+              x2={ex + 2.3}
+              y2={cy - 3.5}
+              stroke={hairColor}
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+            <ellipse cx={ex} cy={cy + 0.2} rx="2.65" ry="1.95" fill="#FCFBF7" stroke={INK} strokeWidth="0.7" />
+            <circle cx={ex} cy={cy + 0.25} r="1.45" fill="#9F7D38" />
+            <circle cx={ex} cy={cy + 0.25} r="0.7" fill="#231B16" />
+            <circle cx={ex - 0.55} cy={cy - 0.35} r="0.5" fill="#FFFFFF" />
+            <path
+              d={`M${ex - 2.7} ${cy - 0.7} Q${ex} ${cy - 2.3} ${ex + 2.7} ${cy - 0.7}`}
+              stroke="#2A2019"
+              strokeWidth="1.25"
+              fill="none"
+              strokeLinecap="round"
+            />
+          </g>
+        ))}
 
         {isElder && (
           <g fill="none" stroke="#8A6A3E" strokeWidth="1.05">
-            <circle cx="20" cy={cy + 0.5} r="2.8" />
-            <circle cx="28" cy={cy + 0.5} r="2.8" />
-            <line x1="22.8" y1={cy + 0.5} x2="25.2" y2={cy + 0.5} />
+            <circle cx="19.4" cy={cy + 0.2} r="3.1" />
+            <circle cx="28.6" cy={cy + 0.2} r="3.1" />
+            <line x1="22.5" y1={cy + 0.2} x2="25.5" y2={cy + 0.2} />
           </g>
         )}
 
         {mood >= 65 ? (
-          <path d={`M21 ${cy + 4.1} Q24 ${cy + 6.7} 27 ${cy + 4.1}`} stroke="#6E4235" strokeWidth="1.35" fill="none" strokeLinecap="round" />
+          <path d={`M22 ${cy + 4.2} Q24 ${cy + 6.1} 26 ${cy + 4.2}`} stroke="#8E5B49" strokeWidth="1.2" fill="none" strokeLinecap="round" />
         ) : mood < 40 ? (
-          <path d={`M21 ${cy + 5.6} Q24 ${cy + 3.6} 27 ${cy + 5.6}`} stroke="#6E4235" strokeWidth="1.35" fill="none" strokeLinecap="round" />
+          <path d={`M22 ${cy + 5.4} Q24 ${cy + 3.8} 26 ${cy + 5.4}`} stroke="#8E5B49" strokeWidth="1.2" fill="none" strokeLinecap="round" />
         ) : (
-          <line x1="21.5" y1={cy + 4.6} x2="26.5" y2={cy + 4.6} stroke="#6E4235" strokeWidth="1.25" strokeLinecap="round" />
+          <line x1="22.4" y1={cy + 4.6} x2="25.6" y2={cy + 4.6} stroke="#8E5B49" strokeWidth="1.15" strokeLinecap="round" />
         )}
 
         {canGear && (activeTask === 'farm' || activeTask === 'forage' || activeTask === 'pasture') && (
@@ -142,10 +200,6 @@ export function VillagerPortrait({
 
         {canGear && (activeTask === 'fish' || activeTask === 'explore') && (
           <path d="M14 14.5 C15 8 33 8 34 14.5 Z" fill="#4C6D82" stroke={INK} strokeWidth="1.2" />
-        )}
-
-        {canGear && (activeTask === 'guard' || activeTask === 'hunt') && (
-          <path d="M13 15 C16 7 32 7 35 15 Q24 11.5 13 15 Z" fill="#5B6A7A" stroke={INK} strokeWidth="1.2" />
         )}
 
         {canGear && activeTask === 'study' && (

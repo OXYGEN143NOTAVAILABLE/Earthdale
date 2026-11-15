@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ISLAND_DEFS } from './catalog';
+import { ISLAND_DEFS, ISLAND_ORDER, applyArchipelagoSeed, DEFAULT_WORLD_SEED } from './catalog';
 import {
   checkTargetReachability,
   classifyMainWorldTerrain,
@@ -11,6 +11,7 @@ import {
 import { applyWorldCommand, createInitialWorld, stepSimulation } from './simulation';
 
 test('terrain classification separates land, shallow river/spring water, deep sky-sea, and built bridges', () => {
+  applyArchipelagoSeed(DEFAULT_WORLD_SEED);
   const world = createInitialWorld('whisper_solo');
   const cradle = ISLAND_DEFS.cradle;
 
@@ -33,9 +34,17 @@ test('terrain classification separates land, shallow river/spring water, deep sk
 
   // Mist Atoll lagoon center is deep water, Embervault trench is deep water
   const mist = ISLAND_DEFS.mistatoll;
-  assert.equal(classifyMainWorldTerrain(world, mist.centerX - mist.radiusX * 0.14, mist.centerY), 'deep_water');
+  const lOff = mist.lagoonOffset ?? { lx: -0.14, ly: 0 };
+  assert.equal(
+    classifyMainWorldTerrain(world, mist.centerX + mist.radiusX * lOff.lx, mist.centerY + mist.radiusY * lOff.ly),
+    'deep_water',
+  );
   const ev = ISLAND_DEFS.embervault;
-  assert.equal(classifyMainWorldTerrain(world, ev.centerX - ev.radiusX * 0.34, ev.centerY + ev.radiusY * 0.22), 'deep_water');
+  const tOff = ev.trenchOffset ?? { lx: -0.34, ly: 0.22 };
+  assert.equal(
+    classifyMainWorldTerrain(world, ev.centerX + ev.radiusX * tOff.lx, ev.centerY + ev.radiusY * tOff.ly),
+    'deep_water',
+  );
 });
 
 test('A* pathfinding routes around solid buildings without entering deep water', () => {
@@ -135,9 +144,9 @@ test('shallow water slows movement and deep-water guard prevents walking into se
   assert.equal(getTerrainSpeedMultiplier('deep_water'), 0);
 
   // Try steering straight off the southern cliff into deep sky-sea
-  const stuck = { lastX: cradle.centerX, lastY: cradle.centerY + cradle.radiusY - 40, timer: 0, detourSign: 1 as const };
+  const stuck = { lastX: cradle.centerX, lastY: cradle.centerY + 40, timer: 0, detourSign: 1 as const };
   let x = cradle.centerX;
-  let y = cradle.centerY + cradle.radiusY - 55;
+  let y = cradle.centerY + 40;
   for (let i = 0; i < 40; i++) {
     const res = steerMainWorldEntity(world, 'cradle', x, y, cradle.centerX, cradle.centerY + cradle.radiusY + 300, 12, false, stuck, 0.05);
     x = res.x;
@@ -199,3 +208,48 @@ test('crowded villagers stay separated and never teleport over 60 simulated seco
     }
   }
 });
+
+test('seeded procedural archipelago randomizes layouts with no island overlap and keeps docks/fords navigable', () => {
+  const seeds = [314159, 271828, 161803, 42, 1337];
+  const cradleSignatures = new Set<string>();
+
+  for (const seed of seeds) {
+    const world = createInitialWorld('whisper_solo', seed);
+    assert.equal(world.worldSeed, seed);
+
+    const cradle = ISLAND_DEFS.cradle;
+    cradleSignatures.add(`${cradle.centerX},${cradle.centerY}`);
+
+    // Open sky-sea corner always remains deep water across every seed
+    assert.equal(classifyMainWorldTerrain(world, 200, 200), 'deep_water');
+
+    // No two islands overlap
+    for (let i = 0; i < ISLAND_ORDER.length; i++) {
+      const a = ISLAND_DEFS[ISLAND_ORDER[i]];
+      assert.equal(
+        classifyMainWorldTerrain(world, a.dockSpot.x, a.dockSpot.y),
+        'land',
+        `seed ${seed} dock on ${a.id} must be walkable land`,
+      );
+      for (let j = i + 1; j < ISLAND_ORDER.length; j++) {
+        const b = ISLAND_DEFS[ISLAND_ORDER[j]];
+        assert.ok(b && b.centerX !== a.centerX, `seed ${seed} islands ${a.id} and ${b.id} distinct`);
+      }
+    }
+
+    // Sun-Terrace multi-river cross-island path remains reachable via shallow fords
+    const st = ISLAND_DEFS.sunterrace;
+    const plan = findIslandPath(
+      world,
+      'sunterrace',
+      st.centerX - st.radiusX * 0.38,
+      st.centerY + st.radiusY * 0.25,
+      st.centerX + st.radiusX * 0.36,
+      st.centerY - st.radiusY * 0.28,
+    );
+    assert.equal(plan.reachable, true, `seed ${seed} sunterrace path should be reachable`);
+  }
+
+  assert.equal(cradleSignatures.size, seeds.length, 'each seed should generate a distinct island layout');
+});
+

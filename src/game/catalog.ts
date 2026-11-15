@@ -6,6 +6,8 @@ import type {
   ComfortItem,
   IslandDef,
   IslandId,
+  IslandPondSpec,
+  IslandRiverSpec,
   LifeStage,
   SeasonType,
   SkillId,
@@ -27,19 +29,59 @@ export const WORLD_WIDTH = 7600;
 export const WORLD_HEIGHT = 5200;
 export const WORLD_SCALE = 0.085; // 7600x5200 -> 646x442 3D world units
 export const CURRENT_WORLD_VERSION = 9;
+export const DEFAULT_WORLD_SEED = 104729;
 
-export function islandCoastWobble(def: IslandDef, angleRad: number): number {
-  return (
+export function mulberry32(seed: number): () => number {
+  let a = (Math.floor(Math.abs(seed)) || 1) >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function wrapAngleDiff(a: number, b: number): number {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+
+export function islandCoastWobble(
+  def: Pick<IslandDef, 'centerX' | 'centerY' | 'coastSeed' | 'coastRotRad' | 'coveAngles'>,
+  angleRad: number,
+): number {
+  const rot = def.coastRotRad ?? 0;
+  const a = angleRad - rot;
+  const seedBase = def.coastSeed ?? Math.round(def.centerX * 13 + def.centerY * 17);
+  const p1 = (seedBase % 997) * 0.017;
+  const p2 = ((seedBase * 7) % 991) * 0.019;
+  const p3 = ((seedBase * 13) % 983) * 0.023;
+  const p4 = ((seedBase * 29) % 977) * 0.031;
+
+  let wobble =
     1 +
-    Math.sin(angleRad * 5 + def.centerX * 0.01) * 0.06 +
-    Math.cos(angleRad * 3 - def.centerY * 0.01) * 0.04
-  );
+    Math.sin(a * 2 + p1) * 0.068 +
+    Math.cos(a * 3 - p2) * 0.056 +
+    Math.sin(a * 5 + p3) * 0.036 +
+    Math.cos(a * 7 - p4) * 0.018;
+
+  if (def.coveAngles && def.coveAngles.length > 0) {
+    for (let i = 0; i < def.coveAngles.length; i++) {
+      const diff = Math.abs(wrapAngleDiff(angleRad, def.coveAngles[i]));
+      if (diff < 0.44) {
+        // Organic inward coastal bay / river-mouth estuary notch
+        wobble -= Math.exp(-(diff * diff) / 0.036) * 0.135;
+      }
+    }
+  }
+
+  return Math.max(0.75, Math.min(1.24, wobble));
 }
 
 export function getIslandRimPoint(
   def: IslandDef,
   angleRad: number,
-  radiusFraction = 0.96,
+  radiusFraction = 0.94,
 ): { x: number; y: number } {
   const wobble = islandCoastWobble(def, angleRad) * radiusFraction;
   return {
@@ -49,252 +91,222 @@ export function getIslandRimPoint(
 }
 
 function createDockSpot(def: Omit<IslandDef, 'dockSpot'>, angleRad: number): IslandDef['dockSpot'] {
-  const wobble =
-    1 +
-    Math.sin(angleRad * 5 + def.centerX * 0.01) * 0.06 +
-    Math.cos(angleRad * 3 - def.centerY * 0.01) * 0.04;
+  const wobble = islandCoastWobble(def, angleRad);
   const rx = def.radiusX * wobble;
   const ry = def.radiusY * wobble;
   return {
-    x: Math.round(def.centerX + Math.cos(angleRad) * rx * 0.95),
-    y: Math.round(def.centerY + Math.sin(angleRad) * ry * 0.95),
-    seaX: Math.round(def.centerX + Math.cos(angleRad) * (rx + 170)),
-    seaY: Math.round(def.centerY + Math.sin(angleRad) * (ry + 170)),
+    x: Math.round(def.centerX + Math.cos(angleRad) * rx * 0.87),
+    y: Math.round(def.centerY + Math.sin(angleRad) * ry * 0.87),
+    seaX: Math.round(def.centerX + Math.cos(angleRad) * (rx + 185)),
+    seaY: Math.round(def.centerY + Math.sin(angleRad) * (ry + 185)),
   };
 }
 
-function makeIsland(
-  spec: Omit<IslandDef, 'dockSpot'>,
-  dockAngleRad: number,
-): IslandDef {
-  return {
-    ...spec,
-    dockSpot: createDockSpot(spec, dockAngleRad),
-  };
+function buildSplineRiverPoints(
+  radiusX: number,
+  radiusY: number,
+  wobbleAtAngle: (ang: number) => number,
+  startDx: number,
+  startDy: number,
+  exitAngle: number,
+  rng: () => number,
+  bendSign: number,
+  steps = 9,
+): { dx: number; dy: number }[] {
+  const rimWob = wobbleAtAngle(exitAngle);
+  const endDx = Math.cos(exitAngle) * radiusX * rimWob * 1.07;
+  const endDy = Math.sin(exitAngle) * radiusY * rimWob * 1.07;
+  const chordX = endDx - startDx;
+  const chordY = endDy - startDy;
+  const chordLen = Math.hypot(chordX, chordY) || 1;
+  const perpX = -chordY / chordLen;
+  const perpY = chordX / chordLen;
+  const meanderAmp = (0.14 + rng() * 0.14) * chordLen * bendSign;
+
+  const pts: { dx: number; dy: number }[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const envelope = Math.sin(t * Math.PI);
+    const sWave = Math.sin(t * Math.PI * 1.65) * meanderAmp * envelope;
+    let dx = startDx + chordX * t + perpX * sWave;
+    let dy = startDy + chordY * t + perpY * sWave;
+    // Keep central bonfire clearing dry unless starting near spring
+    const dCenter = Math.hypot(dx, dy);
+    const minCenterClear = 152;
+    if (i > 0 && i < steps && dCenter < minCenterClear) {
+      const pushAng = Math.atan2(dy || perpY, dx || perpX);
+      dx = Math.cos(pushAng) * minCenterClear;
+      dy = Math.sin(pushAng) * minCenterClear;
+    }
+    pts.push({ dx: Math.round(dx), dy: Math.round(dy) });
+  }
+  return pts;
 }
 
-export const ISLAND_DEFS: Record<IslandId, IslandDef> = {
-  cradle: makeIsland(
-    {
-      id: 'cradle',
-      name: 'Cradle Isle',
-      subtitle: 'Sunlit meadow basin with mossy spring, winding stream, boulders & rising northern bluff.',
-      biome: 'meadow',
-      terrainStyle: 'basin',
-      roleTag: 'homeland',
-      centerX: 2950,
-      centerY: 2780,
-      radiusX: 760,
-      radiusY: 520,
-      elevationY: 0.78,
-      defaultCultureId: 'hearthfolk',
-      hasSpring: true,
-      springOffset: { dx: -235, dy: -135 },
-      hasWaterfall: true,
-      waterfallAngle: 0.92,
-      rivers: [
-        {
-          width: 44,
-          points: [
-            { dx: -235, dy: -135 },
-            { dx: -90, dy: -35 },
-            { dx: 85, dy: 90 },
-            { dx: 290, dy: 270 },
-            { dx: 455, dy: 385 },
-          ],
-        },
-      ],
-      oreRichness: 'stone',
-      soilQuality: 0.95,
-    },
-    0.18,
-  ),
-  timbercrown: makeIsland(
-    {
-      id: 'timbercrown',
-      name: 'Timbercrown Cliffside',
-      subtitle: 'Sheer multi-tiered cedar cliffside escarpment home to the Cedarwood Sylvans.',
-      biome: 'pine',
-      terrainStyle: 'cliffside',
-      roleTag: 'timber',
-      centerX: 1420,
-      centerY: 1820,
-      radiusX: 850,
-      radiusY: 430,
-      elevationY: 6.2,
-      defaultCultureId: 'sylvan',
-      hasSpring: true,
-      springOffset: { dx: 185, dy: 95 },
-      hasWaterfall: true,
-      waterfallAngle: 0.72,
-      oreRichness: 'stone',
-      soilQuality: 0.85,
-    },
-    2.82,
-  ),
-  sunterrace: makeIsland(
-    {
-      id: 'sunterrace',
-      name: 'Sun-Terrace Rivers',
-      subtitle: 'Sprawling three-river valley of golden loam terraces, rich harvests & cascading channels.',
-      biome: 'terrace',
-      terrainStyle: 'multi_river',
-      roleTag: 'harvest',
-      centerX: 4620,
-      centerY: 3640,
-      radiusX: 950,
-      radiusY: 650,
-      elevationY: 1.05,
-      defaultCultureId: 'hearthfolk',
-      hasSpring: true,
-      springOffset: { dx: -210, dy: -165 },
-      hasWaterfall: true,
-      waterfallAngle: 0.45,
-      rivers: [
-        {
-          width: 54,
-          points: [
-            { dx: -520, dy: -260 },
-            { dx: -210, dy: -165 },
-            { dx: 40, dy: -30 },
-            { dx: 360, dy: 120 },
-            { dx: 790, dy: 250 },
-          ],
-        },
-        {
-          width: 46,
-          points: [
-            { dx: -210, dy: -165 },
-            { dx: -165, dy: 45 },
-            { dx: -40, dy: 255 },
-            { dx: 150, dy: 525 },
-          ],
-        },
-        {
-          width: 40,
-          points: [
-            { dx: 40, dy: -30 },
-            { dx: 225, dy: -195 },
-            { dx: 510, dy: -340 },
-          ],
-        },
-      ],
-      oreRichness: 'none',
-      soilQuality: 1.32,
-    },
-    -0.42,
-  ),
-  coppercrag: makeIsland(
-    {
-      id: 'coppercrag',
-      name: 'Copper-Crag Spire',
-      subtitle: 'Steep basalt caldera & mineral crags settled by the Cragforge Smiths.',
-      biome: 'crag',
-      terrainStyle: 'caldera',
-      roleTag: 'forge',
-      centerX: 4180,
-      centerY: 1340,
-      radiusX: 610,
-      radiusY: 445,
-      elevationY: 6.9,
-      defaultCultureId: 'cragforge',
-      hasSpring: false,
-      hasWaterfall: true,
-      waterfallAngle: 1.56,
-      oreRichness: 'rich_metals',
-      soilQuality: 0.55,
-    },
-    1.57,
-  ),
-  mistatoll: makeIsland(
-    {
-      id: 'mistatoll',
-      name: 'Outer Mist Atoll',
-      subtitle: 'Compact crescent sea-cliff lagoon reachable only by boat, glider, or sky-cable.',
-      biome: 'mist_atoll',
-      terrainStyle: 'atoll',
-      roleTag: 'harbor',
-      centerX: 5960,
-      centerY: 2660,
-      radiusX: 500,
-      radiusY: 380,
-      elevationY: 0.65,
-      defaultCultureId: 'mist_mariner',
-      hasSpring: true,
-      springOffset: { dx: 115, dy: -85 },
-      hasWaterfall: false,
-      oreRichness: 'stone',
-      soilQuality: 0.8,
-    },
-    3.1,
-  ),
-  starbloom: makeIsland(
-    {
-      id: 'starbloom',
-      name: 'Starbloom Ruins',
-      subtitle: 'Jade-meadow exploration sanctuary dotted with starlight obelisks, orchards & healing springs.',
-      biome: 'ruins',
-      terrainStyle: 'ruins',
-      roleTag: 'exploration',
-      centerX: 1460,
-      centerY: 3960,
-      radiusX: 680,
-      radiusY: 500,
-      elevationY: 2.05,
-      defaultCultureId: 'hearthfolk',
-      hasSpring: true,
-      springOffset: { dx: -135, dy: 85 },
-      hasWaterfall: true,
-      waterfallAngle: 2.35,
-      oreRichness: 'stone',
-      soilQuality: 1.15,
-    },
-    0.1,
-  ),
-  embervault: makeIsland(
-    {
-      id: 'embervault',
-      name: 'Ashen Bastion',
-      subtitle: 'Unbridged volcanic fortress holding rich iron vaults—guarded by the hostile Ashen Bastion.',
-      biome: 'volcanic',
-      terrainStyle: 'volcanic',
-      roleTag: 'battle',
-      centerX: 6140,
-      centerY: 1080,
-      radiusX: 650,
-      radiusY: 460,
-      elevationY: 4.8,
-      defaultCultureId: 'ashen_raider',
-      hasSpring: false,
-      hasWaterfall: false,
-      oreRichness: 'rich_metals',
-      soilQuality: 0.45,
-    },
-    1.75,
-  ),
-  frostpeak: makeIsland(
-    {
-      id: 'frostpeak',
-      name: 'Frostpeak Massif',
-      subtitle: 'Towering unbridged mountain island of jagged alpine peaks, passes, iron veins & snow shrines.',
-      biome: 'frost',
-      terrainStyle: 'mountain',
-      roleTag: 'alpine',
-      centerX: 2320,
-      centerY: 860,
-      radiusX: 790,
-      radiusY: 555,
-      elevationY: 8.8,
-      defaultCultureId: 'cragforge',
-      hasSpring: true,
-      springOffset: { dx: 140, dy: 95 },
-      hasWaterfall: true,
-      waterfallAngle: 1.95,
-      oreRichness: 'rich_metals',
-      soilQuality: 0.4,
-    },
-    1.22,
-  ),
+interface IslandArchetypeTemplate {
+  id: IslandId;
+  name: string;
+  subtitle: string;
+  biome: IslandDef['biome'];
+  terrainStyle: IslandDef['terrainStyle'];
+  roleTag: IslandDef['roleTag'];
+  baseRx: number;
+  baseRy: number;
+  baseElev: number;
+  defaultCultureId: IslandDef['defaultCultureId'];
+  hasSpring: boolean;
+  hasWaterfall: boolean;
+  riverCountRange: [number, number];
+  ringBand: 'center' | 'inner' | 'outer';
+  oreRichness: IslandDef['oreRichness'];
+  soilQuality: number;
+}
+
+const ARCHIPELAGO_TEMPLATES: Record<IslandId, IslandArchetypeTemplate> = {
+  cradle: {
+    id: 'cradle',
+    name: 'Cradle Isle',
+    subtitle: 'Sunlit meadow basin with mossy spring, winding stream & sheltered coastal coves.',
+    biome: 'meadow',
+    terrainStyle: 'basin',
+    roleTag: 'homeland',
+    baseRx: 780,
+    baseRy: 550,
+    baseElev: 0.72,
+    defaultCultureId: 'hearthfolk',
+    hasSpring: true,
+    hasWaterfall: false,
+    riverCountRange: [1, 2],
+    ringBand: 'center',
+    oreRichness: 'stone',
+    soilQuality: 0.95,
+  },
+  timbercrown: {
+    id: 'timbercrown',
+    name: 'Timbercrown Cliffside',
+    subtitle: 'Steep cedar cliffside escarpment home to the Cedarwood Sylvans.',
+    biome: 'pine',
+    terrainStyle: 'cliffside',
+    roleTag: 'timber',
+    baseRx: 840,
+    baseRy: 470,
+    baseElev: 5.6,
+    defaultCultureId: 'sylvan',
+    hasSpring: true,
+    hasWaterfall: true,
+    riverCountRange: [1, 1],
+    ringBand: 'inner',
+    oreRichness: 'stone',
+    soilQuality: 0.85,
+  },
+  sunterrace: {
+    id: 'sunterrace',
+    name: 'Sun-Terrace Rivers',
+    subtitle: 'Expansive multi-river valley of fertile golden loam, coastal estuaries & cascades.',
+    biome: 'terrace',
+    terrainStyle: 'multi_river',
+    roleTag: 'harvest',
+    baseRx: 940,
+    baseRy: 640,
+    baseElev: 0.92,
+    defaultCultureId: 'hearthfolk',
+    hasSpring: true,
+    hasWaterfall: false,
+    riverCountRange: [2, 3],
+    ringBand: 'inner',
+    oreRichness: 'none',
+    soilQuality: 1.32,
+  },
+  starbloom: {
+    id: 'starbloom',
+    name: 'Starbloom Ruins',
+    subtitle: 'Jade-meadow exploration sanctuary with ancient ruins, rivers, orchards & spring coves.',
+    biome: 'ruins',
+    terrainStyle: 'ruins',
+    roleTag: 'exploration',
+    baseRx: 700,
+    baseRy: 515,
+    baseElev: 1.45,
+    defaultCultureId: 'hearthfolk',
+    hasSpring: true,
+    hasWaterfall: true,
+    riverCountRange: [1, 1],
+    ringBand: 'inner',
+    oreRichness: 'stone',
+    soilQuality: 1.15,
+  },
+  coppercrag: {
+    id: 'coppercrag',
+    name: 'Copper-Crag Spire',
+    subtitle: 'Steep basalt caldera & mineral crags settled by the Cragforge Smiths.',
+    biome: 'crag',
+    terrainStyle: 'caldera',
+    roleTag: 'forge',
+    baseRx: 620,
+    baseRy: 460,
+    baseElev: 6.4,
+    defaultCultureId: 'cragforge',
+    hasSpring: false,
+    hasWaterfall: true,
+    riverCountRange: [0, 0],
+    ringBand: 'outer',
+    oreRichness: 'rich_metals',
+    soilQuality: 0.55,
+  },
+  mistatoll: {
+    id: 'mistatoll',
+    name: 'Outer Mist Atoll',
+    subtitle: 'Crescent sea-cliff lagoon opening into tranquil turquoise shoals.',
+    biome: 'mist_atoll',
+    terrainStyle: 'atoll',
+    roleTag: 'harbor',
+    baseRx: 540,
+    baseRy: 410,
+    baseElev: 0.62,
+    defaultCultureId: 'mist_mariner',
+    hasSpring: true,
+    hasWaterfall: false,
+    riverCountRange: [0, 0],
+    ringBand: 'outer',
+    oreRichness: 'stone',
+    soilQuality: 0.8,
+  },
+  embervault: {
+    id: 'embervault',
+    name: 'Ashen Bastion',
+    subtitle: 'Unbridged volcanic fortress holding rich iron vaults—guarded by the hostile Ashen Bastion.',
+    biome: 'volcanic',
+    terrainStyle: 'volcanic',
+    roleTag: 'battle',
+    baseRx: 660,
+    baseRy: 480,
+    baseElev: 4.5,
+    defaultCultureId: 'ashen_raider',
+    hasSpring: false,
+    hasWaterfall: false,
+    riverCountRange: [0, 0],
+    ringBand: 'outer',
+    oreRichness: 'rich_metals',
+    soilQuality: 0.45,
+  },
+  frostpeak: {
+    id: 'frostpeak',
+    name: 'Frostpeak Massif',
+    subtitle: 'Towering unbridged alpine massif with snow ridges, mountain stream & iron veins.',
+    biome: 'frost',
+    terrainStyle: 'mountain',
+    roleTag: 'alpine',
+    baseRx: 780,
+    baseRy: 560,
+    baseElev: 8.2,
+    defaultCultureId: 'cragforge',
+    hasSpring: true,
+    hasWaterfall: true,
+    riverCountRange: [0, 1],
+    ringBand: 'outer',
+    oreRichness: 'rich_metals',
+    soilQuality: 0.4,
+  },
 };
 
 export const ISLAND_ORDER: IslandId[] = [
@@ -307,6 +319,273 @@ export const ISLAND_ORDER: IslandId[] = [
   'embervault',
   'frostpeak',
 ];
+
+function shuffleWithRng<T>(items: T[], rng: () => number): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+export function generateSeededArchipelago(seed: number): Record<IslandId, IslandDef> {
+  const rng = mulberry32(seed);
+  const placed: Partial<Record<IslandId, { centerX: number; centerY: number; radiusX: number; radiusY: number }>> = {};
+
+  const marginX = 760;
+  const marginY = 660;
+
+  // 1. Place Cradle Isle in a varied central sea region
+  const cradleTpl = ARCHIPELAGO_TEMPLATES.cradle;
+  const cradleRx = Math.round(cradleTpl.baseRx * (0.9 + rng() * 0.2));
+  const cradleRy = Math.round(cradleTpl.baseRy * (0.9 + rng() * 0.2));
+  const cradleCx = Math.round(2850 + rng() * 1900);
+  const cradleCy = Math.round(2050 + rng() * 1100);
+  placed.cradle = { centerX: cradleCx, centerY: cradleCy, radiusX: cradleRx, radiusY: cradleRy };
+
+  const overlapsAny = (cx: number, cy: number, rx: number, ry: number, minGap: number): boolean => {
+    if (cx - rx < marginX || cx + rx > WORLD_WIDTH - marginX) return true;
+    if (cy - ry < marginY || cy + ry > WORLD_HEIGHT - marginY) return true;
+    for (const p of Object.values(placed)) {
+      if (!p) continue;
+      const dx = cx - p.centerX;
+      const dy = cy - p.centerY;
+      const nx = dx / (rx + p.radiusX + minGap);
+      const ny = dy / (ry + p.radiusY + minGap);
+      if (nx * nx + ny * ny < 1.05) return true;
+    }
+    return false;
+  };
+
+  // 2. Place inner & outer islands in randomized sector angles without fixed coordinates
+  const innerIds = shuffleWithRng<IslandId>(['timbercrown', 'sunterrace', 'starbloom'], rng);
+  const outerIds = shuffleWithRng<IslandId>(['coppercrag', 'mistatoll', 'embervault', 'frostpeak'], rng);
+  const baseInnerPhase = rng() * Math.PI * 2;
+  const baseOuterPhase = rng() * Math.PI * 2;
+
+  const placeRing = (ids: IslandId[], baseAngle: number, distMin: number, distMax: number) => {
+    for (let idx = 0; idx < ids.length; idx++) {
+      const id = ids[idx];
+      const tpl = ARCHIPELAGO_TEMPLATES[id];
+      const rx = Math.round(tpl.baseRx * (0.86 + rng() * 0.26));
+      const ry = Math.round(tpl.baseRy * (0.86 + rng() * 0.26));
+      let chosenX = cradleCx + 1500;
+      let chosenY = cradleCy;
+      let found = false;
+
+      for (const gap of [300, 220, 150]) {
+        for (let attempt = 0; attempt < 90; attempt++) {
+          const sectorAng =
+            baseAngle +
+            (idx / ids.length) * Math.PI * 2 +
+            (rng() - 0.5) * (attempt < 24 ? 0.85 : Math.PI * 1.4);
+          const dist = distMin + rng() * (distMax - distMin);
+          const cx = Math.round(cradleCx + Math.cos(sectorAng) * dist * 1.24);
+          const cy = Math.round(cradleCy + Math.sin(sectorAng) * dist * 0.92);
+          if (!overlapsAny(cx, cy, rx, ry, gap)) {
+            chosenX = cx;
+            chosenY = cy;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        // Fallback wide scan across world interior
+        for (let attempt = 0; attempt < 220; attempt++) {
+          const cx = Math.round(marginX + rx + rng() * (WORLD_WIDTH - (marginX + rx) * 2));
+          const cy = Math.round(marginY + ry + rng() * (WORLD_HEIGHT - (marginY + ry) * 2));
+          if (!overlapsAny(cx, cy, rx, ry, 140)) {
+            chosenX = cx;
+            chosenY = cy;
+            break;
+          }
+        }
+      }
+
+      placed[id] = { centerX: chosenX, centerY: chosenY, radiusX: rx, radiusY: ry };
+    }
+  };
+
+  placeRing(innerIds, baseInnerPhase, 1380, 1850);
+  placeRing(outerIds, baseOuterPhase, 2250, 3200);
+
+  // 3. Populate procedural terrain shapes, rivers, ponds, coves & dock anchors for each island
+  const defs = {} as Record<IslandId, IslandDef>;
+  for (const id of ISLAND_ORDER) {
+    const tpl = ARCHIPELAGO_TEMPLATES[id];
+    const box = placed[id]!;
+    const coastSeed = Math.floor(rng() * 1_000_000) + 1;
+    const coastRotRad = Number((rng() * Math.PI * 2).toFixed(3));
+    const ridgeAngle = Number((rng() * Math.PI * 2).toFixed(3));
+    const elevationY = Number((tpl.baseElev * (0.88 + rng() * 0.24)).toFixed(2));
+
+    // Spring placed clearly away from central clearing plaza
+    let springOffset: { dx: number; dy: number } | undefined;
+    if (tpl.hasSpring) {
+      const sAng = rng() * Math.PI * 2;
+      const sRad = 0.28 + rng() * 0.22;
+      let sdx = Math.round(Math.cos(sAng) * box.radiusX * sRad);
+      let sdy = Math.round(Math.sin(sAng) * box.radiusY * sRad);
+      if (Math.hypot(sdx, sdy) < 175) {
+        const push = 178 / Math.max(1, Math.hypot(sdx, sdy));
+        sdx = Math.round(sdx * push);
+        sdy = Math.round(sdy * push);
+      }
+      springOffset = { dx: sdx, dy: sdy };
+    }
+
+    // Dock faces toward Cradle (or open water if Cradle) inside a sheltered cove
+    const rawToCradle =
+      id === 'cradle'
+        ? rng() * Math.PI * 2
+        : Math.atan2(cradleCy - box.centerY, cradleCx - box.centerX);
+    const dockAngleRad = rawToCradle + (rng() - 0.5) * 0.65;
+
+    // Pick waterfall angle on cliffside/highland islands cleanly away from the dock cove
+    let waterfallAngle: number | undefined;
+    if (tpl.hasWaterfall) {
+      waterfallAngle = dockAngleRad + (rng() > 0.5 ? 1 : -1) * (1.25 + rng() * 1.15);
+    }
+
+    // Build coastal cove angles (dock bay + river estuary mouths)
+    const coveAngles: number[] = [dockAngleRad];
+    const riverMouthAngles: number[] = [];
+    const minRiv = tpl.riverCountRange[0];
+    const maxRiv = tpl.riverCountRange[1];
+    const riverCount = maxRiv > minRiv ? minRiv + Math.floor(rng() * (maxRiv - minRiv + 1)) : minRiv;
+
+    for (let r = 0; r < riverCount; r++) {
+      let mouthAng =
+        r === 0 && waterfallAngle !== undefined && (id === 'timbercrown' || id === 'frostpeak')
+          ? waterfallAngle
+          : dockAngleRad + Math.PI * (0.45 + r * 0.62) + (rng() - 0.5) * 0.42;
+      // Keep non-cliff river estuaries away from the dock pier itself
+      if (Math.abs(wrapAngleDiff(mouthAng, dockAngleRad)) < 0.52) {
+        mouthAng = dockAngleRad + (r % 2 === 0 ? 0.78 : -0.78);
+      }
+      riverMouthAngles.push(mouthAng);
+      // Low/medium coast estuaries carve natural sandy bays where river meets sea
+      if (!(tpl.hasWaterfall && waterfallAngle !== undefined && Math.abs(wrapAngleDiff(mouthAng, waterfallAngle)) < 0.25)) {
+        coveAngles.push(mouthAng);
+      }
+    }
+
+    // Mist Atoll lagoon opening & Embervault caldera fissure offsets (seeded)
+    let lagoonOffset: { lx: number; ly: number } | undefined;
+    let trenchOffset: { lx: number; ly: number } | undefined;
+    if (id === 'mistatoll') {
+      const lAng = dockAngleRad + (rng() - 0.5) * 0.5;
+      lagoonOffset = {
+        lx: Number((Math.cos(lAng) * 0.16).toFixed(3)),
+        ly: Number((Math.sin(lAng) * 0.16).toFixed(3)),
+      };
+    } else if (id === 'embervault') {
+      const tAng = rng() * Math.PI * 2;
+      trenchOffset = {
+        lx: Number((Math.cos(tAng) * 0.34).toFixed(3)),
+        ly: Number((Math.sin(tAng) * 0.34).toFixed(3)),
+      };
+    }
+
+    const partialDef: Omit<IslandDef, 'dockSpot'> = {
+      id,
+      name: tpl.name,
+      subtitle: tpl.subtitle,
+      biome: tpl.biome,
+      terrainStyle: tpl.terrainStyle,
+      roleTag: tpl.roleTag,
+      centerX: box.centerX,
+      centerY: box.centerY,
+      radiusX: box.radiusX,
+      radiusY: box.radiusY,
+      elevationY,
+      defaultCultureId: tpl.defaultCultureId,
+      hasSpring: tpl.hasSpring,
+      springOffset,
+      hasWaterfall: tpl.hasWaterfall,
+      waterfallAngle,
+      coastSeed,
+      coastRotRad,
+      ridgeAngle,
+      coveAngles,
+      riverMouthAngles,
+      dockAngleRad,
+      lagoonOffset,
+      trenchOffset,
+      oreRichness: tpl.oreRichness,
+      soilQuality: tpl.soilQuality,
+    };
+
+    const wobbleAt = (ang: number) => islandCoastWobble(partialDef, ang);
+
+    // Generate smooth spline rivers starting at spring or highland headwaters -> coastal bay / waterfall
+    const rivers: IslandRiverSpec[] = [];
+    for (let r = 0; r < riverCount; r++) {
+      const mouthAng = riverMouthAngles[r];
+      let startDx: number;
+      let startDy: number;
+      if (r === 0 && springOffset) {
+        startDx = springOffset.dx;
+        startDy = springOffset.dy;
+      } else {
+        const headAng = mouthAng + Math.PI + (rng() - 0.5) * 0.7;
+        const headR = 0.26 + rng() * 0.24;
+        startDx = Math.round(Math.cos(headAng) * box.radiusX * headR);
+        startDy = Math.round(Math.sin(headAng) * box.radiusY * headR);
+      }
+      const width = id === 'sunterrace' ? Math.round(48 + rng() * 14) : Math.round(38 + rng() * 12);
+      const pts = buildSplineRiverPoints(
+        box.radiusX,
+        box.radiusY,
+        wobbleAt,
+        startDx,
+        startDy,
+        mouthAng,
+        rng,
+        r % 2 === 0 ? 1 : -1,
+      );
+      rivers.push({ width, points: pts });
+    }
+    if (rivers.length > 0) {
+      partialDef.rivers = rivers;
+    }
+
+    // Small scenic inland ponds on lush meadow/terrace/ruins islands (outside central hearth clearing)
+    const ponds: IslandPondSpec[] = [];
+    if (id === 'cradle' || id === 'sunterrace' || id === 'starbloom') {
+      const pondAng = dockAngleRad + Math.PI * (0.72 + rng() * 0.56);
+      const pondR = 0.42 + rng() * 0.14;
+      const pdx = Math.round(Math.cos(pondAng) * box.radiusX * pondR);
+      const pdy = Math.round(Math.sin(pondAng) * box.radiusY * pondR);
+      if (!springOffset || Math.hypot(pdx - springOffset.dx, pdy - springOffset.dy) > 160) {
+        ponds.push({
+          dx: pdx,
+          dy: pdy,
+          rx: Math.round(42 + rng() * 22),
+          ry: Math.round(34 + rng() * 18),
+        });
+      }
+    }
+    if (ponds.length > 0) {
+      partialDef.ponds = ponds;
+    }
+
+    defs[id] = {
+      ...partialDef,
+      dockSpot: createDockSpot(partialDef, dockAngleRad),
+    };
+  }
+
+  return defs;
+}
+
+export const ISLAND_DEFS: Record<IslandId, IslandDef> = generateSeededArchipelago(DEFAULT_WORLD_SEED);
 
 // Settleable islands assigned sequentially to players in standard multiplayer rooms
 export const PLAYER_VILLAGE_ISLANDS: IslandId[] = [
@@ -337,12 +616,13 @@ function createBridgeSpec(
   requiredTechId: string,
   costTimber: number,
   costStone: number,
+  defs: Record<IslandId, IslandDef> = ISLAND_DEFS,
 ): SkyBridgeEntity {
-  const fromDef = ISLAND_DEFS[fromIsland];
-  const toDef = ISLAND_DEFS[toIsland];
+  const fromDef = defs[fromIsland];
+  const toDef = defs[toIsland];
   const ang = Math.atan2(toDef.centerY - fromDef.centerY, toDef.centerX - fromDef.centerX);
-  const p1 = getIslandRimPoint(fromDef, ang, 0.96);
-  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.96);
+  const p1 = getIslandRimPoint(fromDef, ang, 0.92);
+  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.92);
   return {
     id,
     name,
@@ -370,12 +650,13 @@ function createCablewaySpec(
   costTimber: number,
   costStone: number,
   costIron: number,
+  defs: Record<IslandId, IslandDef> = ISLAND_DEFS,
 ): SkyCablewayEntity {
-  const fromDef = ISLAND_DEFS[fromIsland];
-  const toDef = ISLAND_DEFS[toIsland];
+  const fromDef = defs[fromIsland];
+  const toDef = defs[toIsland];
   const ang = Math.atan2(toDef.centerY - fromDef.centerY, toDef.centerX - fromDef.centerX);
-  const p1 = getIslandRimPoint(fromDef, ang, 0.9);
-  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.9);
+  const p1 = getIslandRimPoint(fromDef, ang, 0.88);
+  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.88);
   return {
     id,
     name,
@@ -397,91 +678,131 @@ function createCablewaySpec(
   };
 }
 
-export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = [
-  createBridgeSpec(
-    'bridge_cradle_sun',
-    'Sun-Terrace Causeway',
-    'cradle',
-    'sunterrace',
-    1,
-    'rope_bridges',
-    26,
-    12,
-  ),
-  createBridgeSpec(
-    'bridge_cradle_timber',
-    'Timbercrown Sky-Bridge',
-    'cradle',
-    'timbercrown',
-    1,
-    'rope_bridges',
-    32,
-    16,
-  ),
-  createBridgeSpec(
-    'bridge_cradle_starbloom',
-    'Starbloom Pilgrim Span',
-    'cradle',
-    'starbloom',
-    1,
-    'rope_bridges',
-    28,
-    14,
-  ),
-  createBridgeSpec(
-    'bridge_timber_crag',
-    'Copper-Crag High Arch',
-    'timbercrown',
-    'coppercrag',
-    2,
-    'sky_causeways',
-    44,
-    36,
-  ),
-];
+function buildSkyBridgesForDefs(defs: Record<IslandId, IslandDef>): SkyBridgeEntity[] {
+  return [
+    createBridgeSpec(
+      'bridge_cradle_sun',
+      'Sun-Terrace Causeway',
+      'cradle',
+      'sunterrace',
+      1,
+      'rope_bridges',
+      26,
+      12,
+      defs,
+    ),
+    createBridgeSpec(
+      'bridge_cradle_timber',
+      'Timbercrown Sky-Bridge',
+      'cradle',
+      'timbercrown',
+      1,
+      'rope_bridges',
+      32,
+      16,
+      defs,
+    ),
+    createBridgeSpec(
+      'bridge_cradle_starbloom',
+      'Starbloom Pilgrim Span',
+      'cradle',
+      'starbloom',
+      1,
+      'rope_bridges',
+      28,
+      14,
+      defs,
+    ),
+    createBridgeSpec(
+      'bridge_timber_crag',
+      'Copper-Crag High Arch',
+      'timbercrown',
+      'coppercrag',
+      2,
+      'sky_causeways',
+      44,
+      36,
+      defs,
+    ),
+  ];
+}
 
-export const INITIAL_SKY_CABLEWAYS: SkyCablewayEntity[] = [
-  createCablewaySpec(
-    'cable_timber_frost',
-    'Frostpeak Glacier Gondola',
-    'timbercrown',
-    'frostpeak',
-    'cliff_cableways',
-    34,
-    26,
-    4,
-  ),
-  createCablewaySpec(
-    'cable_crag_frost',
-    'High-Iron Alpine Line',
-    'coppercrag',
-    'frostpeak',
-    'cliff_cableways',
-    38,
-    30,
-    6,
-  ),
-  createCablewaySpec(
-    'cable_starbloom_timber',
-    'Cedar-Starlight Aerial Line',
-    'starbloom',
-    'timbercrown',
-    'cliff_cableways',
-    30,
-    20,
-    2,
-  ),
-  createCablewaySpec(
-    'cable_mist_ember',
-    'Bastion Cliff Zipline',
-    'mistatoll',
-    'embervault',
-    'cliff_cableways',
-    36,
-    28,
-    8,
-  ),
-];
+function buildSkyCablewaysForDefs(defs: Record<IslandId, IslandDef>): SkyCablewayEntity[] {
+  return [
+    createCablewaySpec(
+      'cable_timber_frost',
+      'Frostpeak Glacier Gondola',
+      'timbercrown',
+      'frostpeak',
+      'cliff_cableways',
+      34,
+      26,
+      4,
+      defs,
+    ),
+    createCablewaySpec(
+      'cable_crag_frost',
+      'High-Iron Alpine Line',
+      'coppercrag',
+      'frostpeak',
+      'cliff_cableways',
+      38,
+      30,
+      6,
+      defs,
+    ),
+    createCablewaySpec(
+      'cable_starbloom_timber',
+      'Cedar-Starlight Aerial Line',
+      'starbloom',
+      'timbercrown',
+      'cliff_cableways',
+      30,
+      20,
+      2,
+      defs,
+    ),
+    createCablewaySpec(
+      'cable_mist_ember',
+      'Bastion Cliff Zipline',
+      'mistatoll',
+      'embervault',
+      'cliff_cableways',
+      36,
+      28,
+      8,
+      defs,
+    ),
+  ];
+}
+
+export const INITIAL_SKY_BRIDGES: SkyBridgeEntity[] = buildSkyBridgesForDefs(ISLAND_DEFS);
+export const INITIAL_SKY_CABLEWAYS: SkyCablewayEntity[] = buildSkyCablewaysForDefs(ISLAND_DEFS);
+
+let activeArchipelagoSeed = DEFAULT_WORLD_SEED;
+
+export function getActiveArchipelagoSeed(): number {
+  return activeArchipelagoSeed;
+}
+
+/**
+ * Rebuilds the shared ISLAND_DEFS, INITIAL_SKY_BRIDGES, and INITIAL_SKY_CABLEWAYS in place
+ * for the given deterministic worldSeed so all simulation, navigation, renderer, and 2D map views stay synced.
+ */
+export function applyArchipelagoSeed(seed: number): void {
+  const normalizedSeed = Math.floor(Math.abs(seed)) || DEFAULT_WORLD_SEED;
+  if (normalizedSeed === activeArchipelagoSeed) return;
+  activeArchipelagoSeed = normalizedSeed;
+
+  const generated = generateSeededArchipelago(normalizedSeed);
+  for (const id of ISLAND_ORDER) {
+    ISLAND_DEFS[id] = generated[id];
+  }
+  const nextBridges = buildSkyBridgesForDefs(ISLAND_DEFS);
+  INITIAL_SKY_BRIDGES.splice(0, INITIAL_SKY_BRIDGES.length, ...nextBridges);
+  const nextCables = buildSkyCablewaysForDefs(ISLAND_DEFS);
+  INITIAL_SKY_CABLEWAYS.splice(0, INITIAL_SKY_CABLEWAYS.length, ...nextCables);
+}
 
 export const TRAVELER_ATTITUDE_META: Record<
   TravelerAttitude,

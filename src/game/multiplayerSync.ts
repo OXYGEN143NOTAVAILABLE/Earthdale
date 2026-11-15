@@ -1,3 +1,4 @@
+import { applyArchipelagoSeed } from './catalog';
 import { ensureGovernanceArrays } from './governance';
 import { applyWorldCommand, stepSimulation } from './simulation';
 import type { Particle, SettingsState, WorldCommand, WorldState } from './types';
@@ -71,6 +72,9 @@ export function sanitizeSyncedWorldState(
   incoming: WorldState,
   localSettings: SettingsState,
 ): WorldState {
+  if (typeof incoming.worldSeed === 'number' && incoming.worldSeed > 0) {
+    applyArchipelagoSeed(incoming.worldSeed);
+  }
   if (!Array.isArray(incoming.eventLog)) incoming.eventLog = [];
   if (!Array.isArray(incoming.wildHerds)) incoming.wildHerds = [];
   ensureGovernanceArrays(incoming);

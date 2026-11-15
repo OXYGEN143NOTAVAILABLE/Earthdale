@@ -1,5 +1,5 @@
 import { Compass, RotateCcw, X } from 'lucide-react';
-import { ISLAND_DEFS, ISLAND_ORDER, WORLD_HEIGHT, WORLD_WIDTH } from '../game/catalog';
+import { ISLAND_DEFS, ISLAND_ORDER, WORLD_HEIGHT, WORLD_WIDTH, islandCoastWobble } from '../game/catalog';
 import { CULTURES } from '../game/techAndCultures';
 import type {
   AirGliderEntity,
@@ -157,24 +157,55 @@ export function ValleyMapDrawer({
             );
           })}
 
-          {/* Floating Islands (always crisp and visible to God) */}
+          {/* Floating Islands (organic coastline silhouettes + inland rivers & ponds) */}
           {ISLAND_ORDER.map((id) => {
             const def = ISLAND_DEFS[id];
             const st = islands[id];
             const disc = Boolean(st?.discovered);
             const cult = CULTURES[st?.owningCultureId ?? def.defaultCultureId];
+            const perimeterPts: string[] = [];
+            const samples = 44;
+            for (let i = 0; i < samples; i++) {
+              const ang = (i / samples) * Math.PI * 2;
+              const wob = islandCoastWobble(def, ang);
+              const px = Math.round(def.centerX + Math.cos(ang) * def.radiusX * wob);
+              const py = Math.round(def.centerY + Math.sin(ang) * def.radiusY * wob);
+              perimeterPts.push(`${px},${py}`);
+            }
             return (
-              <ellipse
-                key={id}
-                cx={def.centerX}
-                cy={def.centerY}
-                rx={def.radiusX}
-                ry={def.radiusY}
-                fill={BIOME_FILL[def.biome] ?? '#3E6B47'}
-                stroke={cult.bannerColor}
-                strokeWidth={disc ? 14 : 9}
-                strokeDasharray={disc ? undefined : '28 14'}
-              />
+              <g key={id}>
+                <polygon
+                  points={perimeterPts.join(' ')}
+                  fill={BIOME_FILL[def.biome] ?? '#3E6B47'}
+                  stroke={cult.bannerColor}
+                  strokeWidth={disc ? 14 : 9}
+                  strokeDasharray={disc ? undefined : '28 14'}
+                  strokeLinejoin="round"
+                />
+                {def.rivers?.map((riv, rIdx) => (
+                  <polyline
+                    key={`${id}_r_${rIdx}`}
+                    points={riv.points.map((pt) => `${Math.round(def.centerX + pt.dx)},${Math.round(def.centerY + pt.dy)}`).join(' ')}
+                    fill="none"
+                    stroke="#5EB2C9"
+                    strokeWidth={Math.max(18, Math.round(riv.width * 0.72))}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    opacity="0.88"
+                  />
+                ))}
+                {def.ponds?.map((pond, pIdx) => (
+                  <ellipse
+                    key={`${id}_p_${pIdx}`}
+                    cx={def.centerX + pond.dx}
+                    cy={def.centerY + pond.dy}
+                    rx={pond.rx}
+                    ry={pond.ry}
+                    fill="#5EB2C9"
+                    opacity="0.9"
+                  />
+                ))}
+              </g>
             );
           })}
 

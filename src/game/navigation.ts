@@ -1,4 +1,5 @@
 import { ISLAND_DEFS, ISLAND_ORDER, getIslandAtPoint, islandCoastWobble } from './catalog';
+import { islandTerrainHeightAtSim, pondDepthAtSim, riverDepthAtSim } from './lowPolyWorld';
 import { BUILDING_BLUEPRINTS } from './techAndCultures';
 import type {
   EntityStuckState,
@@ -47,6 +48,7 @@ export interface SteerResult {
 }
 
 const worldGridCache = new WeakMap<WorldState, Map<IslandId, IslandNavGrid>>();
+const stuckGridSigCache = new WeakMap<EntityStuckState, string>();
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
@@ -129,11 +131,12 @@ export function findCablewayStepNav(world: Pick<WorldState, 'cableways'>, from: 
 function sampleRiverTerrain(def: IslandDef, wx: number, wy: number): TerrainKind | null {
   if (!def.rivers || def.rivers.length === 0) return null;
   let maxDepth = 0;
+  let bestMouth = 0;
   let atShallowFord = false;
 
   for (const r of def.rivers) {
-    const halfW = r.width * 0.55;
-    for (let i = 0; i < r.points.length - 1; i++) {
+    const segCount = Math.max(1, r.points.length - 1);
+    for (let i = 0; i < segCount; i++) {
       const a = r.points[i];
       const b = r.points[i + 1];
       const { dist, t, len } = segmentProjT(
@@ -144,14 +147,19 @@ function sampleRiverTerrain(def: IslandDef, wx: number, wy: number): TerrainKind
         def.centerX + b.dx,
         def.centerY + b.dy,
       );
-      if (dist < halfW * 1.45) {
-        const carve = (1 - smoothstep(halfW * 0.35, halfW * 1.45, dist)) * 0.68;
+      const u = (i + t) / segCount;
+      const mouthBoost = smoothstep(0.66, 1.0, u);
+      const halfW = r.width * (0.48 + mouthBoost * 0.42);
+      if (dist < halfW * 1.38) {
+        const carve = (1 - smoothstep(halfW * 0.32, halfW * 1.38, dist)) * (0.58 + mouthBoost * 0.16);
         if (carve > maxDepth) {
           maxDepth = carve;
-          // Natural stone gravel fords across rivers ensure every island sector remains reachable on foot
+          bestMouth = mouthBoost;
+          // Natural gravel bars & stone fords keep every river-divided island sector walkable on foot
           const nearFord =
-            (len > 150 && (Math.abs(t - 0.32) < 0.11 || Math.abs(t - 0.72) < 0.11)) ||
-            (len <= 150 && Math.abs(t - 0.5) < 0.18);
+            (len > 120 && (Math.abs(t - 0.32) < 0.14 || Math.abs(t - 0.72) < 0.14)) ||
+            (len <= 120 && Math.abs(t - 0.5) < 0.22) ||
+            u < 0.18;
           atShallowFord = nearFord;
         }
       }
@@ -159,7 +167,7 @@ function sampleRiverTerrain(def: IslandDef, wx: number, wy: number): TerrainKind
   }
 
   if (maxDepth <= 0.18) return null;
-  if (def.biome === 'terrace' && maxDepth >= 0.54 && !atShallowFord) {
+  if (!atShallowFord && ((def.biome === 'terrace' && maxDepth >= 0.54) || (bestMouth > 0.78 && maxDepth >= 0.48))) {
     return 'deep_water';
   }
   return 'shallow_water';
@@ -167,7 +175,7 @@ function sampleRiverTerrain(def: IslandDef, wx: number, wy: number): TerrainKind
 
 /**
  * Pure terrain classifier at any simulation coordinate `(wx, wy)`.
- * Accounts for built sky-bridges, island plateau/cliff rims, springs, rivers, Mist Atoll lagoon, and Embervault trench.
+ * Accounts for built sky-bridges, coastal beaches/coves dipping into sea water, springs, rivers, ponds, lagoon, and volcanic trench.
  */
 export function classifyMainWorldTerrain(
   world: Pick<WorldState, 'bridges'>,
@@ -179,38 +187,7 @@ export function classifyMainWorldTerrain(
   const def = getIslandAtPoint(wx, wy, 10);
   if (!def) return 'deep_water';
 
-  const nd = islandNormalizedDistNav(def, wx, wy);
-  if (nd >= 0.94) return 'deep_water';
-
-  if (def.hasSpring && def.springOffset) {
-    const sx = def.centerX + def.springOffset.dx;
-    const sy = def.centerY + def.springOffset.dy;
-    const sd = Math.hypot(wx - sx, wy - sy);
-    if (sd < 18) return 'deep_water';
-    if (sd < 34) return 'shallow_water';
-  }
-
-  const riverKind = sampleRiverTerrain(def, wx, wy);
-  if (riverKind) return riverKind;
-
-  if (def.biome === 'mist_atoll') {
-    const lx = (wx - def.centerX) / def.radiusX;
-    const ly = (wy - def.centerY) / def.radiusY;
-    const lagoonDip = smoothstep(0.44, 0.14, Math.hypot(lx + 0.14, ly)) * 0.62;
-    const gentle = Math.sin(wx * 0.014 + wy * 0.011) * 0.28 + Math.cos(wx * 0.009 - wy * 0.015) * 0.22;
-    const approxH = def.elevationY + gentle * (1 - nd * 0.52) - lagoonDip;
-    if (approxH < 0.34) return 'deep_water';
-    if (approxH < 0.54) return 'shallow_water';
-  }
-
-  if (def.biome === 'volcanic') {
-    const lx = (wx - def.centerX) / def.radiusX;
-    const ly = (wy - def.centerY) / def.radiusY;
-    const trench = smoothstep(0.24, 0.06, Math.hypot(lx + 0.34, ly - 0.22)) * 1.55;
-    if (trench > 0.72) return 'deep_water';
-  }
-
-  return 'land';
+  return classifyIslandOnlyTerrain(def, wx, wy);
 }
 
 export function getTerrainSpeedMultiplier(kind: TerrainKind): number {
@@ -387,7 +364,7 @@ export function getOrBuildIslandNavGrid(
 
 function classifyIslandOnlyTerrain(def: IslandDef, wx: number, wy: number): TerrainKind {
   const nd = islandNormalizedDistNav(def, wx, wy);
-  if (nd >= 0.94) return 'deep_water';
+  if (nd >= 0.96) return 'deep_water';
 
   if (def.hasSpring && def.springOffset) {
     const sx = def.centerX + def.springOffset.dx;
@@ -397,25 +374,41 @@ function classifyIslandOnlyTerrain(def: IslandDef, wx: number, wy: number): Terr
     if (sd < 34) return 'shallow_water';
   }
 
+  const pond = pondDepthAtSim(def, wx, wy);
+  if (pond.depth >= 0.42) return 'deep_water';
+  if (pond.depth > 0.16) return 'shallow_water';
+
   const riverKind = sampleRiverTerrain(def, wx, wy);
   if (riverKind) return riverKind;
 
   if (def.biome === 'mist_atoll') {
     const lx = (wx - def.centerX) / def.radiusX;
     const ly = (wy - def.centerY) / def.radiusY;
-    const lagoonDip = smoothstep(0.44, 0.14, Math.hypot(lx + 0.14, ly)) * 0.62;
-    const gentle = Math.sin(wx * 0.014 + wy * 0.011) * 0.28 + Math.cos(wx * 0.009 - wy * 0.015) * 0.22;
-    const approxH = def.elevationY + gentle * (1 - nd * 0.52) - lagoonDip;
-    if (approxH < 0.34) return 'deep_water';
-    if (approxH < 0.54) return 'shallow_water';
+    const lOff = def.lagoonOffset ?? { lx: -0.14, ly: 0 };
+    const lDist = Math.hypot(lx - lOff.lx, ly - lOff.ly);
+    if (lDist < 0.16) return 'deep_water';
+    if (lDist < 0.25) return 'shallow_water';
   }
 
   if (def.biome === 'volcanic') {
     const lx = (wx - def.centerX) / def.radiusX;
     const ly = (wy - def.centerY) / def.radiusY;
-    const trench = smoothstep(0.24, 0.06, Math.hypot(lx + 0.34, ly - 0.22)) * 1.55;
+    const tOff = def.trenchOffset ?? { lx: -0.34, ly: 0.22 };
+    const trench = smoothstep(0.24, 0.06, Math.hypot(lx - tOff.lx, ly - tOff.ly)) * 1.55;
     if (trench > 0.72) return 'deep_water';
   }
+
+  if (Math.hypot(wx - def.dockSpot.x, wy - def.dockSpot.y) <= 28) {
+    return 'land';
+  }
+  if (nd <= 0.15) {
+    return 'land';
+  }
+
+  // Natural sloping sandy beaches & low estuaries blend smoothly under y = 0 water plane
+  const h = islandTerrainHeightAtSim(def, wx, wy, nd);
+  if (h <= 0.02) return 'deep_water';
+  if (h <= 0.18) return 'shallow_water';
 
   return 'land';
 }
@@ -480,15 +473,27 @@ function hasGridLineOfSight(
   bx: number,
   by: number,
 ): boolean {
-  const dist = Math.hypot(bx - ax, by - ay);
-  const steps = Math.max(1, Math.ceil(dist / (grid.cellSize * 0.45)));
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return true;
+  const nx = -dy / dist;
+  const ny = dx / dist;
+  const margin = 5.5;
+  const steps = Math.max(2, Math.ceil(dist / (grid.cellSize * 0.34)));
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
-    const px = ax + (bx - ax) * t;
-    const py = ay + (by - ay) * t;
+    const px = ax + dx * t;
+    const py = ay + dy * t;
     const col = Math.floor((px - grid.minX) / grid.cellSize);
     const row = Math.floor((py - grid.minY) / grid.cellSize);
     if (!isCellWalkable(grid, col, row)) return false;
+    // Check narrow shoulder clearance so simplified chords never graze obstacle corners
+    for (const side of [-margin, margin]) {
+      const sc = Math.floor((px + nx * side - grid.minX) / grid.cellSize);
+      const sr = Math.floor((py + ny * side - grid.minY) / grid.cellSize);
+      if (!isCellWalkable(grid, sc, sr)) return false;
+    }
   }
   return true;
 }
@@ -694,7 +699,17 @@ export function findIslandPath(
       if (closed[nIdx]) continue;
 
       const terrainPenalty = grid.terrain[nIdx] === 'shallow_water' ? 1.85 : 1.0;
-      const tentativeG = gScore[curr] + stepCost * terrainPenalty;
+      // Gentle wall-hugging penalty keeps routes in open clearings rather than scraping building/tree rims
+      let clearancePenalty = 0;
+      if (
+        !isCellWalkable(grid, nc + 1, nr) ||
+        !isCellWalkable(grid, nc - 1, nr) ||
+        !isCellWalkable(grid, nc, nr + 1) ||
+        !isCellWalkable(grid, nc, nr - 1)
+      ) {
+        clearancePenalty = 0.32;
+      }
+      const tentativeG = gScore[curr] + stepCost * terrainPenalty + clearancePenalty;
       if (tentativeG < gScore[nIdx]) {
         cameFrom[nIdx] = curr;
         gScore[nIdx] = tentativeG;
@@ -929,19 +944,24 @@ export function steerMainWorldEntity(
   const onBridgeAlready = Boolean(isOnBuiltBridgeNav(world, x, y));
   let activeWaypointX = navX;
   let activeWaypointY = navY;
+  let activeGrid: IslandNavGrid | null = null;
 
   if (!onBridgeAlready && stuckState) {
+    activeGrid = getOrBuildIslandNavGrid(world, islandId, landmarks);
+    const prevSig = stuckGridSigCache.get(stuckState);
+    const obstacleSigChanged = prevSig !== undefined && prevSig !== activeGrid.signature;
     const goalChanged =
       stuckState.cachedGoalX === undefined ||
       stuckState.cachedGoalY === undefined ||
       stuckState.cachedIslandId !== islandId ||
       Math.hypot(navX - stuckState.cachedGoalX, navY - stuckState.cachedGoalY) > 22;
 
-    if (goalChanged || !stuckState.waypoints || stuckState.waypoints.length === 0) {
+    if (goalChanged || obstacleSigChanged || !stuckState.waypoints || stuckState.waypoints.length === 0) {
       const plan = findIslandPath(world, islandId, x, y, navX, navY, landmarks);
       stuckState.cachedGoalX = navX;
       stuckState.cachedGoalY = navY;
       stuckState.cachedIslandId = islandId;
+      stuckGridSigCache.set(stuckState, activeGrid.signature);
       if (!plan.reachable) {
         navBlockedReason = plan.reason;
         stuckState.navBlockedReason = plan.reason;
@@ -973,7 +993,7 @@ export function steerMainWorldEntity(
 
   let dx = activeWaypointX - x;
   let dy = activeWaypointY - y;
-  const d = Math.hypot(dx, dy);
+  let d = Math.hypot(dx, dy);
   if (d < 0.01) {
     return {
       x,
@@ -992,21 +1012,39 @@ export function steerMainWorldEntity(
   let wasStuckReset = false;
   if (stuckState) {
     const goalDist = Math.hypot(navX - x, navY - y);
-    if (goalDist > 14) {
+    if (goalDist > 18) {
       stuckState.timer += dt;
-      if (stuckState.timer >= 0.85) {
+      if (stuckState.timer >= 0.65) {
         const moved = Math.hypot(x - stuckState.lastX, y - stuckState.lastY);
-        if (moved < 3.5) {
+        if (moved < 4.5) {
           stuckState.detourSign = stuckState.detourSign === 1 ? -1 : 1;
           stuckState.recoveryCount = (stuckState.recoveryCount ?? 0) + 1;
-          // Force fresh A* waypoint computation
           stuckState.waypoints = undefined;
           stuckState.timer = 0;
           stuckState.lastX = x;
           stuckState.lastY = y;
-          const ang = Math.atan2(dy, dx) + stuckState.detourSign * 1.15;
-          dx = Math.cos(ang) * d;
-          dy = Math.sin(ang) * d;
+
+          if ((stuckState.recoveryCount ?? 0) === 2 && activeGrid) {
+            // Second attempt: step toward nearest guaranteed clear land cell center to escape U-pockets
+            const curCol = Math.floor((x - activeGrid.minX) / activeGrid.cellSize);
+            const curRow = Math.floor((y - activeGrid.minY) / activeGrid.cellSize);
+            const escapeCell = findNearestWalkableCell(activeGrid, curCol, curRow, 4, true);
+            if (escapeCell) {
+              const esc = cellCenter(activeGrid, escapeCell.col, escapeCell.row);
+              const edx = esc.x - x;
+              const edy = esc.y - y;
+              if (Math.hypot(edx, edy) > 2) {
+                dx = edx;
+                dy = edy;
+                d = Math.hypot(dx, dy);
+              }
+            }
+          } else {
+            const ang = Math.atan2(dy, dx) + stuckState.detourSign * 1.18;
+            dx = Math.cos(ang) * d;
+            dy = Math.sin(ang) * d;
+          }
+
           if ((stuckState.recoveryCount ?? 0) >= 3) {
             stuckState.recoveryCount = 0;
             wasStuckReset = true;

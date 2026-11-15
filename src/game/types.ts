@@ -111,13 +111,12 @@ export interface VillagerCognition {
 }
 
 export type LandmarkKind =
-  | 'cliff_boulder'
-  | 'monolith'
   | 'reed_clump'
   | 'driftwood'
   | 'sky_islet'
   | 'ruin_cairn'
-  | 'crystal_spire';
+  | 'crystal_spire'
+  | 'stump';
 
 export interface WorldLandmark {
   id: string;
@@ -333,6 +332,13 @@ export interface IslandRiverSpec {
   points: { dx: number; dy: number }[];
 }
 
+export interface IslandPondSpec {
+  dx: number;
+  dy: number;
+  rx: number;
+  ry: number;
+}
+
 export interface IslandDef {
   id: IslandId;
   name: string;
@@ -351,6 +357,15 @@ export interface IslandDef {
   hasWaterfall: boolean;
   waterfallAngle?: number;
   rivers?: IslandRiverSpec[];
+  ponds?: IslandPondSpec[];
+  coastSeed?: number;
+  coastRotRad?: number;
+  ridgeAngle?: number;
+  coveAngles?: number[];
+  riverMouthAngles?: number[];
+  dockAngleRad?: number;
+  lagoonOffset?: { lx: number; ly: number };
+  trenchOffset?: { lx: number; ly: number };
   dockSpot: { x: number; y: number; seaX: number; seaY: number };
   oreRichness: 'none' | 'stone' | 'rich_metals';
   soilQuality: number;
@@ -980,6 +995,7 @@ export interface Particle {
 
 export interface WorldState {
   version: number;
+  worldSeed: number;
   gameMode: GameMode;
   era: VillageEra;
   localHomeIslandId: IslandId;
@@ -1047,6 +1063,7 @@ export interface WorldState {
 }
 
 export interface HudSnapshot {
+  worldSeed: number;
   gameMode: GameMode;
   era: VillageEra;
   localHomeIslandId: IslandId;

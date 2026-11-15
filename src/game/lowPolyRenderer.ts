@@ -126,6 +126,87 @@ function createContactShadowTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+function createTerrainDetailTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#f2f3ee';
+    ctx.fillRect(0, 0, size, size);
+    // Deterministic seeded soft moss mottling + fine blade flecks wrapped seamlessly at edges
+    let seed = 1337;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    for (let i = 0; i < 240; i++) {
+      const x = rand() * size;
+      const y = rand() * size;
+      const r = 10 + rand() * 24;
+      const shade = rand() > 0.45 ? 'rgba(255,255,250,0.08)' : 'rgba(182,192,168,0.11)';
+      for (const ox of [-size, 0, size]) {
+        for (const oy of [-size, 0, size]) {
+          ctx.fillStyle = shade;
+          ctx.beginPath();
+          ctx.arc(x + ox, y + oy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    for (let i = 0; i < 950; i++) {
+      const x = rand() * size;
+      const y = rand() * size;
+      const len = 3 + rand() * 5;
+      const ang = (rand() - 0.5) * 0.7 - Math.PI * 0.5;
+      ctx.strokeStyle = rand() > 0.5 ? 'rgba(255,255,244,0.14)' : 'rgba(170,184,154,0.14)';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+      ctx.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = Math.min(8, Math.max(1, maxAnisotropy));
+  return tex;
+}
+
+function createSunbeamTexture(): THREE.CanvasTexture {
+  const w = 128;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const v = y / (h - 1);
+      // Brighter near top canopy gap, soft fade toward ground
+      const vertFade = Math.sin(Math.min(1, Math.max(0, v)) * Math.PI) * (1 - v * 0.55);
+      for (let x = 0; x < w; x++) {
+        const u = (x / (w - 1)) * 2 - 1;
+        const beamProfile = Math.exp(-u * u * 5.2);
+        const alpha = Math.max(0, Math.min(255, Math.round(beamProfile * vertFade * 210)));
+        const idx = (y * w + x) * 4;
+        img.data[idx] = 255;
+        img.data[idx + 1] = 236;
+        img.data[idx + 2] = 178;
+        img.data[idx + 3] = alpha;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 interface AtmosphereSample {
   zenithHex: number;
   horizonHex: number;
@@ -150,9 +231,9 @@ const ATMO_KEYS: {
   night: number;
 }[] = [
   { t: 0.0, zenith: 0x0e162b, horizon: 0x203254, sun: 0x7a96cf, rim: 0x3b588c, hemiSky: 0x2c426e, hemiGround: 0x1a262c, night: 1.0 },
-  { t: 0.24, zenith: 0x6f8dbd, horizon: 0xf0be9c, sun: 0xffc688, rim: 0x8fb2d9, hemiSky: 0xf0be9c, hemiGround: 0x5c6852, night: 0.25 },
-  { t: 0.48, zenith: 0x5fa7da, horizon: 0xd4ebf5, sun: 0xfff5dc, rim: 0x9fd0ea, hemiSky: 0xbde4f4, hemiGround: 0x627c4d, night: 0.0 },
-  { t: 0.68, zenith: 0x7692b8, horizon: 0xf4c48a, sun: 0xffbc6b, rim: 0xa29cc4, hemiSky: 0xf4cfa0, hemiGround: 0x6b6745, night: 0.08 },
+  { t: 0.24, zenith: 0x6f8dbd, horizon: 0xf0be9c, sun: 0xffc688, rim: 0x8fb2d9, hemiSky: 0xf0be9c, hemiGround: 0x455832, night: 0.25 },
+  { t: 0.48, zenith: 0x5ca4d6, horizon: 0xd9ecdf, sun: 0xffe9bf, rim: 0x9ed3cb, hemiSky: 0xcbe8d6, hemiGround: 0x314a22, night: 0.0 },
+  { t: 0.68, zenith: 0x7692b8, horizon: 0xf2c58a, sun: 0xffc16e, rim: 0xa29cc4, hemiSky: 0xf4cfa0, hemiGround: 0x444c26, night: 0.08 },
   { t: 0.8, zenith: 0x2a3158, horizon: 0xc26e5a, sun: 0xe38e6c, rim: 0x5d6799, hemiSky: 0x6c6894, hemiGround: 0x2a3338, night: 0.72 },
   { t: 1.0, zenith: 0x0e162b, horizon: 0x203254, sun: 0x7a96cf, rim: 0x3b588c, hemiSky: 0x2c426e, hemiGround: 0x1a262c, night: 1.0 },
 ];
@@ -192,8 +273,8 @@ function sampleAtmosphere(timeOfDay: number, weather: WeatherType, season: Seaso
     horizonHex = _colA.getHex();
   }
 
-  const sunIntensity = (1 - nightFactor * 0.72) * (weather === 'rain' ? 0.72 : 1.0) * 1.92;
-  const hemiIntensity = (1 - nightFactor * 0.5) * 0.92;
+  const sunIntensity = (1 - nightFactor * 0.72) * (weather === 'rain' ? 0.72 : 1.0) * 1.48;
+  const hemiIntensity = (1 - nightFactor * 0.5) * 0.68;
   const sunProgress = t >= 0.2 && t <= 0.82 ? (t - 0.2) / 0.62 : 0.5;
 
   return {
@@ -247,6 +328,8 @@ export class LowPolyDioramaRenderer {
   private waterMat: THREE.MeshPhysicalMaterial;
 
   private waterfallsGroup = new THREE.Group();
+  private fallMat: THREE.MeshStandardMaterial;
+  private waterFallsKey = '';
   private springsGroup = new THREE.Group();
   private springsKey = '';
 
@@ -343,6 +426,10 @@ export class LowPolyDioramaRenderer {
 
   private contactShadowTex: THREE.CanvasTexture;
   private contactShadowMat: THREE.MeshBasicMaterial;
+  private terrainDetailTex: THREE.CanvasTexture;
+  private sunbeamTex: THREE.CanvasTexture;
+  private sunbeamMat: THREE.MeshBasicMaterial;
+  private sunbeamsGroup = new THREE.Group();
 
   private peerMarkersGroup = new THREE.Group();
   private peerMarkerCache = new Map<string, THREE.Group>();
@@ -389,7 +476,7 @@ export class LowPolyDioramaRenderer {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.toneMappingExposure = 0.94;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -408,7 +495,7 @@ export class LowPolyDioramaRenderer {
       const roomEnv = new RoomEnvironment();
       this.envRT = pmrem.fromScene(roomEnv, 0.04);
       this.scene.environment = this.envRT.texture;
-      this.scene.environmentIntensity = 0.45;
+      this.scene.environmentIntensity = 0.16;
       roomEnv.dispose();
       pmrem.dispose();
     } catch {
@@ -453,17 +540,17 @@ export class LowPolyDioramaRenderer {
     if (!this.isSoftwareGl) {
       this.composer = new EffectComposer(this.renderer);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.3, 0.5, 0.88);
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.12, 0.35, 0.98);
       this.composer.addPass(this.bloomPass);
       this.composer.addPass(new OutputPass());
     }
 
     this.resize(w, h);
 
-    this.hemiLight = new THREE.HemisphereLight(0xbde4f4, 0x627c4d, 0.92);
+    this.hemiLight = new THREE.HemisphereLight(0xbde4f4, 0x627c4d, 0.68);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfff5dc, 1.92);
+    this.sunLight = new THREE.DirectionalLight(0xfff5dc, 1.48);
     this.sunLight.position.set(40, 62, 32);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(2048, 2048);
@@ -478,7 +565,7 @@ export class LowPolyDioramaRenderer {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    this.rimLight = new THREE.DirectionalLight(0x9fd0ea, 0.52);
+    this.rimLight = new THREE.DirectionalLight(0x9fd0ea, 0.28);
     this.rimLight.position.set(-48, 24, -44);
     this.scene.add(this.rimLight);
 
@@ -486,14 +573,17 @@ export class LowPolyDioramaRenderer {
     this.bonfireLight.position.set(toWorldX(ISLAND_DEFS.cradle.centerX), 2.5, toWorldZ(ISLAND_DEFS.cradle.centerY));
     this.scene.add(this.bonfireLight);
 
+    this.terrainDetailTex = createTerrainDetailTexture(this.renderer.capabilities.getMaxAnisotropy());
     this.terrainMat = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      flatShading: true,
-      roughness: 0.9,
-      metalness: 0.02,
+      map: this.terrainDetailTex,
+      flatShading: false,
+      roughness: 0.98,
+      metalness: 0.0,
+      envMapIntensity: 0.08,
     });
 
-    // Vast Sky-Sea Water Plane
+    // Vast Sky-Sea Water Plane (soft satin turquoise, free of mirror glare)
     const waterGeom = buildSkySeaGeometry();
     const wPos = waterGeom.attributes.position as THREE.BufferAttribute;
     this.waterBaseY = new Float32Array(wPos.count);
@@ -503,41 +593,32 @@ export class LowPolyDioramaRenderer {
     this.waterMat = new THREE.MeshPhysicalMaterial({
       color: 0x3b96ba,
       flatShading: true,
-      roughness: 0.1,
-      metalness: 0.14,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.08,
-      reflectivity: 0.9,
+      roughness: 0.44,
+      metalness: 0.03,
+      clearcoat: 0.1,
+      clearcoatRoughness: 0.55,
+      reflectivity: 0.22,
+      envMapIntensity: 0.2,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.92,
     });
     attachSkySeaSurfaceShader(this.waterMat, this.waterUniforms);
     this.waterMesh = new THREE.Mesh(waterGeom, this.waterMat);
     this.waterMesh.receiveShadow = true;
     this.scene.add(this.waterMesh);
 
-    // Waterfalls & carved island rivers (all islands always visible to God)
-    const fallMat = new THREE.MeshPhysicalMaterial({
-      color: 0x82d8ed,
+    // Waterfalls, carved island rivers & inland ponds (vertex-colored for estuary foam, rebuilt per worldSeed)
+    this.fallMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
       flatShading: true,
-      roughness: 0.12,
+      roughness: 0.48,
+      metalness: 0.02,
+      envMapIntensity: 0.14,
       transparent: true,
-      opacity: 0.86,
+      opacity: 0.88,
       side: THREE.DoubleSide,
     });
-    for (const id of ISLAND_ORDER) {
-      const def = ISLAND_DEFS[id];
-      if (def.hasWaterfall) {
-        const wf = new THREE.Mesh(buildWaterfallGeometry(def), fallMat);
-        this.waterfallsGroup.add(wf);
-      }
-      const riverGeo = buildIslandRiversGeometry(def);
-      if (riverGeo) {
-        const riverMesh = new THREE.Mesh(riverGeo, fallMat);
-        riverMesh.receiveShadow = true;
-        this.waterfallsGroup.add(riverMesh);
-      }
-    }
     this.scene.add(this.waterfallsGroup);
 
     this.contactShadowTex = createContactShadowTexture();
@@ -571,36 +652,59 @@ export class LowPolyDioramaRenderer {
     this.scene.add(this.peerMarkersGroup);
     this.scene.add(this.debugCollisionsGroup);
 
-    // Instanced Archipelago Foliage with GPU Wind Sway, Actor Parting & Cloud Dapple
-    const scatter = buildArchipelagoFoliageScatter();
+    this.sunbeamTex = createSunbeamTexture();
+    this.sunbeamMat = new THREE.MeshBasicMaterial({
+      map: this.sunbeamTex,
+      color: 0xffe6a3,
+      transparent: true,
+      opacity: 0.14,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    const beamOffsets: [number, number, number, number, number][] = [
+      [14, 15, -10, 15, 38],
+      [21, 16, -4, 18, 42],
+      [9, 14, 4, 13, 34],
+      [18, 17, 10, 16, 40],
+      [4, 15, -14, 14, 36],
+    ];
+    for (let i = 0; i < beamOffsets.length; i++) {
+      const [bx, by, bz, bw, bh] = beamOffsets[i];
+      const beam = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh), this.sunbeamMat);
+      beam.position.set(bx, by, bz);
+      beam.rotation.z = 0.42;
+      beam.rotation.y = -0.35 + i * 0.22;
+      beam.renderOrder = 4;
+      this.sunbeamsGroup.add(beam);
+    }
+    this.scene.add(this.sunbeamsGroup);
 
-    const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.84 });
+    // Instanced Archipelago Foliage with GPU Wind Sway, Actor Parting & Cloud Dapple (pre-allocated capacity for any worldSeed)
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: false, roughness: 0.95, envMapIntensity: 0.1 });
     attachFoliageEnvironmentShader(grassMat, this.foliageUniforms, 0.17);
-    this.grassMesh = new THREE.InstancedMesh(createGrassTuftGeometry(), grassMat, Math.max(1, scatter.grassTufts.length));
+    this.grassMesh = new THREE.InstancedMesh(createGrassTuftGeometry(), grassMat, 10000);
+    this.grassMesh.count = 0;
     this.grassMesh.receiveShadow = true;
     this.scene.add(this.grassMesh);
 
-    const flowerStemMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.82 });
+    const flowerStemMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: false, roughness: 0.94, envMapIntensity: 0.1 });
     attachFoliageEnvironmentShader(flowerStemMat, this.foliageUniforms, 0.13);
-    this.flowerStemMesh = new THREE.InstancedMesh(
-      createFlowerStemGeometry(),
-      flowerStemMat,
-      Math.max(1, scatter.wildflowers.length),
-    );
+    this.flowerStemMesh = new THREE.InstancedMesh(createFlowerStemGeometry(), flowerStemMat, 2600);
+    this.flowerStemMesh.count = 0;
     this.scene.add(this.flowerStemMesh);
 
-    const flowerBloomMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.65 });
+    const flowerBloomMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: false, roughness: 0.88, envMapIntensity: 0.14 });
     attachFoliageEnvironmentShader(flowerBloomMat, this.foliageUniforms, 0.13);
-    this.flowerBloomMesh = new THREE.InstancedMesh(
-      createFlowerBloomGeometry(),
-      flowerBloomMat,
-      Math.max(1, scatter.wildflowers.length),
-    );
+    this.flowerBloomMesh = new THREE.InstancedMesh(createFlowerBloomGeometry(), flowerBloomMat, 2600);
+    this.flowerBloomMesh.count = 0;
     this.scene.add(this.flowerBloomMesh);
 
-    const fernMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.8 });
+    const fernMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: false, roughness: 0.94, envMapIntensity: 0.1 });
     attachFoliageEnvironmentShader(fernMat, this.foliageUniforms, 0.12);
-    this.fernMesh = new THREE.InstancedMesh(createFernBushGeometry(), fernMat, Math.max(1, scatter.ferns.length));
+    this.fernMesh = new THREE.InstancedMesh(createFernBushGeometry(), fernMat, 2600);
+    this.fernMesh.count = 0;
     this.fernMesh.receiveShadow = true;
     this.scene.add(this.fernMesh);
 
@@ -711,8 +815,41 @@ export class LowPolyDioramaRenderer {
     return { vw, vh, sx, sy, pxScale };
   }
 
-  private ensureIslands(season: SeasonType, weather: WeatherType) {
-    const key = `${season}_${weather}`;
+  private ensureWaterAndFalls(worldSeed: number, season: SeasonType) {
+    const key = `${worldSeed}_${season}`;
+    if (this.waterFallsKey === key) return;
+    this.waterFallsKey = key;
+
+    while (this.waterfallsGroup.children.length > 0) {
+      const child = this.waterfallsGroup.children[0];
+      this.waterfallsGroup.remove(child);
+      disposeGroupGeometries(child);
+    }
+
+    for (const id of ISLAND_ORDER) {
+      const def = ISLAND_DEFS[id];
+      if (def.hasWaterfall) {
+        const wf = new THREE.Mesh(buildWaterfallGeometry(def), this.fallMat);
+        this.waterfallsGroup.add(wf);
+      }
+      const riverGeo = buildIslandRiversGeometry(def);
+      if (riverGeo) {
+        const riverMesh = new THREE.Mesh(riverGeo, this.fallMat);
+        riverMesh.receiveShadow = true;
+        this.waterfallsGroup.add(riverMesh);
+      }
+    }
+
+    for (let i = 0; i < this.skyBirdStates.length; i++) {
+      const isl = ISLAND_DEFS[ISLAND_ORDER[i % ISLAND_ORDER.length]];
+      this.skyBirdStates[i].centerX = toWorldX(isl.centerX);
+      this.skyBirdStates[i].centerZ = toWorldZ(isl.centerY);
+      this.skyBirdStates[i].baseY = isl.elevationY + 9.5 + (i % 4) * 1.8;
+    }
+  }
+
+  private ensureIslands(worldSeed: number, season: SeasonType, weather: WeatherType) {
+    const key = `${worldSeed}_${season}_${weather}`;
     if (this.islandsKey === key && this.islandMeshes.size === ISLAND_ORDER.length) return;
     this.islandsKey = key;
 
@@ -735,8 +872,8 @@ export class LowPolyDioramaRenderer {
     }
   }
 
-  private ensureSprings(lit: boolean) {
-    const key = String(lit);
+  private ensureSprings(worldSeed: number, lit: boolean) {
+    const key = `${worldSeed}_${lit}`;
     if (this.springsKey === key) return;
     this.springsKey = key;
 
@@ -757,8 +894,8 @@ export class LowPolyDioramaRenderer {
     }
   }
 
-  private ensureLandmarks(season: SeasonType, weather: WeatherType) {
-    const key = `${season}_${weather}`;
+  private ensureLandmarks(worldSeed: number, season: SeasonType, weather: WeatherType) {
+    const key = `${worldSeed}_${season}_${weather}`;
     if (this.landmarksKey === key) return;
     this.landmarksKey = key;
 
@@ -777,8 +914,8 @@ export class LowPolyDioramaRenderer {
     }
   }
 
-  private ensureScatter(season: SeasonType, weather: WeatherType) {
-    const key = `${season}_${weather}`;
+  private ensureScatter(worldSeed: number, season: SeasonType, weather: WeatherType) {
+    const key = `${worldSeed}_${season}_${weather}`;
     if (this.scatterKey === key) return;
     this.scatterKey = key;
 
@@ -787,21 +924,27 @@ export class LowPolyDioramaRenderer {
     const isAutumn = season === 'autumn' && !snow;
 
     const grassPalette = snow
-      ? [0xcad6e0, 0xdce6ee, 0xb2c2cf]
+      ? [0xcad6e0, 0xdce6ee, 0xb2c2cf, 0xc3d1dc, 0xa8b8c7]
       : isAutumn
-        ? [0xb59c48, 0xc98b3c, 0x8e994b]
-        : [0x5e9b4a, 0x72b056, 0x4f8a42];
+        ? [0xb59c48, 0xc98b3c, 0x8e994b, 0x9b823c, 0x6f7432]
+        : [0x76a12c, 0x92bc3a, 0x456f25, 0x628c2b, 0x365b21];
     const flowerPalette = snow
-      ? [0xeef4f8, 0xcde0ec, 0xf8fafc]
+      ? [0xeef4f8, 0xcde0ec, 0xf8fafc, 0xdce8f0]
       : season === 'spring'
-        ? [0xf9b4c4, 0xfef08a, 0xfdf2f8, 0xa5d8ff]
+        ? [0xfef08a, 0xf8fafc, 0xf9b4c4, 0xfde047]
         : isAutumn
-          ? [0xf59e0b, 0xd97706, 0xfbbf24]
-          : [0xfde047, 0xf48fb1, 0xf8fafc, 0xc4b5fd];
-    const fernPalette = snow ? [0x9eb3b8, 0xb8cad0] : isAutumn ? [0x94803e, 0xa87639] : [0x3d7642, 0x4b894c];
-    const stemPalette = snow ? [0x8ea3a6, 0xa3b7ba] : [0x4c8742, 0x5c984d];
+          ? [0xf59e0b, 0xd97706, 0xfbbf24, 0xfef08a]
+          : [0xfde047, 0xf8fafc, 0xfef08a, 0xfacc15];
+    const fernPalette = snow
+      ? [0x9eb3b8, 0xb8cad0, 0x8ea4a9]
+      : isAutumn
+        ? [0x94803e, 0xa87639, 0x766432]
+        : [0x335d22, 0x457329, 0x2a4e1d];
+    const stemPalette = snow ? [0x8ea3a6, 0xa3b7ba] : [0x467427, 0x5c8b30];
 
-    scatter.grassTufts.forEach((pt, idx) => {
+    const grassCount = Math.min(scatter.grassTufts.length, this.grassMesh.instanceMatrix.count);
+    for (let idx = 0; idx < grassCount; idx++) {
+      const pt = scatter.grassTufts[idx];
       this.tmpDummy.position.set(pt.x3, pt.y3, pt.z3);
       this.tmpDummy.rotation.set(0, pt.rotY, 0);
       this.tmpDummy.scale.setScalar(pt.scale);
@@ -809,13 +952,15 @@ export class LowPolyDioramaRenderer {
       this.grassMesh.setMatrixAt(idx, this.tmpDummy.matrix);
       this.tmpColor.setHex(grassPalette[pt.colorIndex % grassPalette.length]);
       this.grassMesh.setColorAt(idx, this.tmpColor);
-    });
-    this.grassMesh.count = scatter.grassTufts.length;
+    }
+    this.grassMesh.count = grassCount;
     this.grassMesh.instanceMatrix.needsUpdate = true;
     if (this.grassMesh.instanceColor) this.grassMesh.instanceColor.needsUpdate = true;
     this.grassMesh.computeBoundingSphere();
 
-    scatter.wildflowers.forEach((pt, idx) => {
+    const flowerCount = Math.min(scatter.wildflowers.length, this.flowerStemMesh.instanceMatrix.count);
+    for (let idx = 0; idx < flowerCount; idx++) {
+      const pt = scatter.wildflowers[idx];
       this.tmpDummy.position.set(pt.x3, pt.y3, pt.z3);
       this.tmpDummy.rotation.set(0, pt.rotY, 0);
       this.tmpDummy.scale.setScalar(pt.scale);
@@ -827,27 +972,29 @@ export class LowPolyDioramaRenderer {
       this.flowerBloomMesh.setMatrixAt(idx, this.tmpDummy.matrix);
       this.tmpColor.setHex(flowerPalette[pt.colorIndex % flowerPalette.length]);
       this.flowerBloomMesh.setColorAt(idx, this.tmpColor);
-    });
-    this.flowerStemMesh.count = scatter.wildflowers.length;
+    }
+    this.flowerStemMesh.count = flowerCount;
     this.flowerStemMesh.instanceMatrix.needsUpdate = true;
     if (this.flowerStemMesh.instanceColor) this.flowerStemMesh.instanceColor.needsUpdate = true;
     this.flowerStemMesh.computeBoundingSphere();
 
-    this.flowerBloomMesh.count = scatter.wildflowers.length;
+    this.flowerBloomMesh.count = flowerCount;
     this.flowerBloomMesh.instanceMatrix.needsUpdate = true;
     if (this.flowerBloomMesh.instanceColor) this.flowerBloomMesh.instanceColor.needsUpdate = true;
     this.flowerBloomMesh.computeBoundingSphere();
 
-    scatter.ferns.forEach((pt, idx) => {
+    const fernCount = Math.min(scatter.ferns.length, this.fernMesh.instanceMatrix.count);
+    for (let idx = 0; idx < fernCount; idx++) {
+      const pt = scatter.ferns[idx];
       this.tmpDummy.position.set(pt.x3, pt.y3, pt.z3);
       this.tmpDummy.rotation.set(0, pt.rotY, 0);
-      this.tmpDummy.scale.setScalar(pt.scale * 1.08);
+      this.tmpDummy.scale.setScalar(pt.scale * 1.12);
       this.tmpDummy.updateMatrix();
       this.fernMesh.setMatrixAt(idx, this.tmpDummy.matrix);
       this.tmpColor.setHex(fernPalette[pt.colorIndex % fernPalette.length]);
       this.fernMesh.setColorAt(idx, this.tmpColor);
-    });
-    this.fernMesh.count = scatter.ferns.length;
+    }
+    this.fernMesh.count = fernCount;
     this.fernMesh.instanceMatrix.needsUpdate = true;
     if (this.fernMesh.instanceColor) this.fernMesh.instanceColor.needsUpdate = true;
     this.fernMesh.computeBoundingSphere();
@@ -1105,7 +1252,7 @@ export class LowPolyDioramaRenderer {
     for (const m of world.memorials) {
       activeIds.add(m.id);
       if (!this.memorialCache.has(m.id)) {
-        const group = createMemorialStoneGroup();
+        const group = createMemorialStoneGroup(m.id);
         group.position.set(toWorldX(m.x), groundHeightAtSim(m.x, m.y), toWorldZ(m.y));
         this.memorialsGroup.add(group);
         this.memorialCache.set(m.id, group);
@@ -1213,12 +1360,33 @@ export class LowPolyDioramaRenderer {
       const children = entry.group.children;
       for (let i = 0; i < children.length; i++) {
         const c = children[i];
-        if (c.userData.isFlame) {
+        if (c.userData.isConstructionRig) {
+          if (isConstructing) {
+            const pulse = Math.max(0, Math.sin(animTimeSec * 8.4 + bWx * 0.3));
+            c.scale.set(1 + pulse * 0.014, 1 - pulse * 0.018, 1 + pulse * 0.014);
+            c.rotation.z = Math.sin(animTimeSec * 16.8 + bWz) * 0.008 * pulse;
+          } else {
+            c.scale.set(1, 1, 1);
+            c.rotation.z = 0;
+          }
+        } else if (c.userData.isProgressPulse) {
+          const pScale = 1 + Math.sin(animTimeSec * 5.2) * 0.08;
+          c.scale.set(1, pScale, 1);
+        } else if (c.userData.isFlame) {
           c.scale.set(
             1 + Math.sin(animTimeSec * 10 + b.x * 0.1) * 0.12,
             0.9 + Math.cos(animTimeSec * 12 + b.y * 0.1) * 0.18,
             1,
           );
+        } else if (c.userData.isEmber) {
+          const flicker = 0.92 + Math.sin(animTimeSec * 9.5 + bWx) * 0.12;
+          c.scale.set(flicker, 0.9 + Math.cos(animTimeSec * 11.2 + bWz) * 0.14, 1);
+        } else if (c.userData.isBellows) {
+          const pump = 0.84 + Math.sin(animTimeSec * 4.4 + bWx * 0.4) * 0.18;
+          c.scale.set(1, pump, 1);
+        } else if (c.userData.isSaw) {
+          c.rotation.z = animTimeSec * 9.5;
+          c.position.y = 0.68 + Math.sin(animTimeSec * 6.5 + bWx) * 0.04;
         } else if (c.userData.isBanner) {
           const flutter = Math.sin(animTimeSec * 5.8 + bWx * 0.7 + i * 0.9) * wind.bannerFlutter;
           c.rotation.y = flutter;
@@ -1253,6 +1421,21 @@ export class LowPolyDioramaRenderer {
       }
     }
 
+    // Animate spring fountain water ripples
+    const springGroups = this.springsGroup.children;
+    for (let s = 0; s < springGroups.length; s++) {
+      const sg = springGroups[s];
+      for (let k = 0; k < sg.children.length; k++) {
+        const part = sg.children[k];
+        if (part.userData.isRipple) {
+          const t = (animTimeSec * 0.65 + s * 0.37) % 1;
+          part.scale.setScalar(0.85 + t * 0.95);
+          const mat = (part as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          if (mat) mat.opacity = (1 - t) * 0.55;
+        }
+      }
+    }
+
     for (const [id, entry] of this.buildingCache.entries()) {
       if (!activeIds.has(id)) {
         this.buildingsGroup.remove(entry.group);
@@ -1280,7 +1463,20 @@ export class LowPolyDioramaRenderer {
 
     for (const v of allPeople) {
       activeIds.add(v.id);
-      const key = `${v.lifeStage}_${v.cloakColor}_${v.hairColor}_${v.cultureId}_${v.gearTier}_${v.weaponType}_${Boolean(v.isStranger)}`;
+      const isSoldierArmorKey =
+        v.activeTask === 'guard' ||
+        Boolean(v.drafted) ||
+        Boolean(v.isStranger && v.gearTier >= 2) ||
+        (v.gearTier === 3 && (v.state === 'fighting' || v.state === 'hunting'));
+      const taskOutfitTag =
+        v.activeTask === 'farm' || v.activeTask === 'forage' || v.activeTask === 'pasture'
+          ? 'straw'
+          : v.activeTask === 'bake'
+            ? 'bake'
+            : v.activeTask === 'smelt'
+              ? 'apron'
+              : 'plain';
+      const key = `chibi2_${v.lifeStage}_${v.cloakColor}_${v.hairColor}_${v.skinTone}_${v.hairStyle}_${v.cultureId}_${v.gearTier}_${v.weaponType}_${Boolean(v.isStranger)}_${isSoldierArmorKey}_${taskOutfitTag}`;
       let entry = this.villagerCache.get(v.id);
 
       if (!entry || entry.key !== key) {
@@ -1343,7 +1539,7 @@ export class LowPolyDioramaRenderer {
       entry.walkWeight += ((moving ? 1 : 0) - entry.walkWeight) * weightAlpha;
       if (moving) entry.walkPhase += Math.min(0.65, stepDist * 4.4);
 
-      const targetGy = groundHeightAtSim(v.x, v.y, world.bridges) + 0.12;
+      const targetGy = groundHeightAtSim(v.x, v.y, world.bridges) + 0.04;
       entry.gy += (targetGy - entry.gy) * heightAlpha;
 
       const isSoaking = v.state === 'soaking' && !moving;
@@ -1365,7 +1561,11 @@ export class LowPolyDioramaRenderer {
       const shoulderR = g.userData.shoulderR as THREE.Object3D | undefined;
       const forearmR = g.userData.forearmR as THREE.Object3D | undefined;
       const headGroup = g.userData.headGroup as THREE.Object3D | undefined;
-      const spine = g.userData.bodyWrap?.children?.find((c: THREE.Object3D) => c !== headGroup && c !== g.userData.chiefBadge) as THREE.Object3D | undefined;
+      const spine =
+        (g.userData.spine as THREE.Object3D | undefined) ??
+        (g.userData.bodyWrap?.children?.find(
+          (c: THREE.Object3D) => c !== headGroup && c !== g.userData.chiefBadge,
+        ) as THREE.Object3D | undefined);
       const bodyWrap = g.userData.bodyWrap as THREE.Object3D | undefined;
 
       const w = entry.walkWeight;
@@ -1379,9 +1579,30 @@ export class LowPolyDioramaRenderer {
       const isAxeWork = !moving && v.state === 'working' && v.activeTask === 'chop';
       const isPickWork = !moving && v.state === 'working' && (v.activeTask === 'quarry' || v.activeTask === 'gather_stone');
       const isGatherWork = !moving && v.state === 'working' && (v.activeTask === 'forage' || v.activeTask === 'farm');
+      const isStationWork =
+        !moving &&
+        v.state === 'working' &&
+        (v.activeTask === 'bake' || v.activeTask === 'smelt' || v.activeTask === 'pasture');
       const isCombat = !moving && (v.state === 'fighting' || v.state === 'hunting');
       const isBuild = !moving && v.state === 'building';
-      const isStudyOrSocial = !moving && (v.state === 'socializing' || (v.state === 'working' && v.activeTask === 'study'));
+      const isStudy = !moving && (v.state === 'inspecting' || (v.state === 'working' && v.activeTask === 'study'));
+      const isSocial = !moving && v.state === 'socializing';
+      const isFestival = !moving && v.state === 'festival';
+      const isEating = !moving && v.state === 'eating';
+      const isResting = !moving && (v.state === 'resting' || v.state === 'sheltering');
+      const isHauling = (v.carriedAmount ?? 0) > 0.1 && moving && !isInfant;
+      const isGuardReady =
+        !isBuild &&
+        !isAxeWork &&
+        !isPickWork &&
+        !isGatherWork &&
+        !isStationWork &&
+        !isEating &&
+        !isSleeping &&
+        !isSoaking &&
+        !isStudy &&
+        !isSocial &&
+        (isCombat || v.activeTask === 'guard' || Boolean(v.drafted) || Boolean(v.isStranger));
 
       if (isInfant) {
         const crawl = Math.sin(animTimeSec * 5.2 + v.animPhase);
@@ -1402,75 +1623,179 @@ export class LowPolyDioramaRenderer {
           bodyWrap.rotation.z = wiggle * 0.07;
         }
       } else {
-        if (hipL) {
-          hipL.rotation.x = isSleeping ? -0.75 : swing;
-        }
-        if (calfL) {
-          calfL.rotation.x = isSleeping ? 0.2 : kneeBendL;
-        }
-        if (hipR) {
-          hipR.rotation.x = isSleeping ? -0.75 : -swing;
-        }
-        if (calfR) {
-          calfR.rotation.x = isSleeping ? 0.2 : kneeBendR;
-        }
+        // Reset secondary rotations cleanly before applying state animation
+        let spineRotX = w * 0.12;
+        let spineRotY = 0;
+        let spineRotZ = 0;
+        let headRotX = 0;
+        let headRotY = 0;
+        let headRotZ = 0;
+        let bodyY = stepBob + breath;
+        let legDip = 0;
 
         if (shoulderL && shoulderR) {
-          shoulderL.rotation.z = 0;
-          shoulderR.rotation.z = 0;
+          shoulderL.rotation.set(0, 0, 0);
+          shoulderR.rotation.set(0, 0, 0);
+          if (forearmL) forearmL.rotation.set(-0.28, 0, 0);
+          if (forearmR) forearmR.rotation.set(-0.28, 0, 0);
+
           if (isCombat && v.weaponType === 'bow') {
-            const draw = Math.max(0, Math.sin(animTimeSec * 5.2 + v.animPhase));
-            shoulderL.rotation.x = -1.48;
-            shoulderR.rotation.x = -1.32 + draw * 0.52;
-            if (forearmR) forearmR.rotation.x = -0.65;
+            // Aimed archery cycle: steady left brace arm + smooth draw back & crisp release recoil
+            const cycle = (animTimeSec * 1.35 + v.animPhase) % 1;
+            const draw = cycle < 0.72 ? cycle / 0.72 : Math.max(0, 1 - (cycle - 0.72) * 5.2);
+            spineRotY = 0.48;
+            headRotY = -0.36;
+            shoulderL.rotation.set(-1.52, 0.22, -0.1);
+            if (forearmL) forearmL.rotation.set(-0.18, 0, 0);
+            shoulderR.rotation.set(-1.42 + draw * 0.48, -0.25, 0.12);
+            if (forearmR) forearmR.rotation.set(-0.45 - draw * 0.95, 0, 0);
+          } else if (isCombat && v.weaponType === 'flint_spear') {
+            // Two-handed braced spear thrust lunge
+            const thrustWave = Math.sin(animTimeSec * 7.8 + v.animPhase);
+            const lunge = Math.max(0, thrustWave);
+            spineRotY = 0.26 - lunge * 0.28;
+            spineRotX = 0.12 + lunge * 0.16;
+            shoulderL.rotation.set(-1.02 - lunge * 0.28, 0.28, 0);
+            if (forearmL) forearmL.rotation.set(-0.65 + lunge * 0.42, 0, 0);
+            shoulderR.rotation.set(-1.12 - lunge * 0.48, -0.18, 0);
+            if (forearmR) forearmR.rotation.set(-0.78 + lunge * 0.62, 0, 0);
           } else if (isCombat) {
-            const strike = Math.sin(animTimeSec * 9.5 + v.animPhase);
-            shoulderL.rotation.x = -0.58 + strike * 0.16;
-            shoulderR.rotation.x = -1.18 + strike * 0.82;
-            if (forearmR) forearmR.rotation.x = -0.85 + strike * 0.4;
-          } else if (isBuild || isPickWork) {
-            const slam = Math.sin(animTimeSec * 8.2 + v.animPhase);
-            shoulderL.rotation.x = -0.45 + slam * 0.22;
-            shoulderR.rotation.x = -1.25 + slam * 0.85;
-            if (forearmR) forearmR.rotation.x = -0.9 + slam * 0.5;
+            // Arming blade guard stance + diagonal slash with torso twist
+            const s = Math.sin(animTimeSec * 8.4 + v.animPhase);
+            spineRotY = s * 0.34;
+            spineRotX = 0.1 + Math.max(0, s) * 0.12;
+            shoulderL.rotation.set(-0.64 + s * 0.18, 0, 0.14);
+            shoulderR.rotation.set(-1.35 + s * 0.95, -0.24 * s, -0.22);
+            if (forearmR) forearmR.rotation.set(-0.85 + s * 0.48, 0, 0);
+          } else if (isBuild) {
+            // Snappy overhead hammer-strike cadence with knee dip & brace arm
+            const t = animTimeSec * 7.6 + v.animPhase;
+            const lift = Math.sin(t);
+            const impact = Math.max(0, -lift);
+            legDip = impact * 0.14;
+            bodyY -= impact * 0.04;
+            spineRotX = 0.14 + impact * 0.14;
+            shoulderL.rotation.set(-0.72, 0.2, 0);
+            shoulderR.rotation.set(-1.45 + lift * 0.85, 0, -0.12);
+            if (forearmR) forearmR.rotation.set(-0.75 + lift * 0.45, 0, 0);
+            headRotX = 0.14 + impact * 0.08;
           } else if (isAxeWork) {
-            const chop = Math.sin(animTimeSec * 7.6 + v.animPhase);
-            shoulderL.rotation.x = -0.75 + chop * 0.35;
-            shoulderR.rotation.x = -1.05 + chop * 0.62;
-            if (forearmR) forearmR.rotation.x = -0.75 + chop * 0.45;
+            // Side-angled woodcutter chop w/ torso twist
+            const chop = Math.sin(animTimeSec * 7.2 + v.animPhase);
+            spineRotY = chop * 0.38;
+            spineRotX = 0.18;
+            shoulderL.rotation.set(-0.88 + chop * 0.36, 0.25, 0.14);
+            shoulderR.rotation.set(-1.12 + chop * 0.72, -0.2, -0.28);
+            if (forearmR) forearmR.rotation.set(-0.7 + chop * 0.48, 0, 0);
+            headRotX = 0.15;
+          } else if (isPickWork) {
+            // Heavy double-arm overhead pickaxe strike
+            const slam = Math.sin(animTimeSec * 7.4 + v.animPhase);
+            const impact = Math.max(0, -slam);
+            legDip = impact * 0.18;
+            spineRotX = 0.2 + impact * 0.16;
+            shoulderL.rotation.set(-1.05 + slam * 0.52, 0.22, 0);
+            shoulderR.rotation.set(-1.32 + slam * 0.88, -0.15, 0);
+            if (forearmR) forearmR.rotation.set(-0.85 + slam * 0.55, 0, 0);
+            headRotX = 0.18;
           } else if (isGatherWork) {
-            const pick = Math.sin(animTimeSec * 5.4 + v.animPhase);
-            shoulderL.rotation.x = -0.85 + pick * 0.3;
-            shoulderR.rotation.x = -0.85 - pick * 0.3;
-          } else if (isStudyOrSocial) {
-            const gesture = Math.sin(animTimeSec * 3.6 + v.animPhase);
-            shoulderL.rotation.x = -0.48 + gesture * 0.28;
-            shoulderR.rotation.x = -0.62 - gesture * 0.32;
-          } else if (v.state === 'inspecting' && !moving) {
-            const tilt = Math.sin(animTimeSec * 2.4 + v.animPhase);
-            shoulderL.rotation.x = -0.55 + tilt * 0.18;
-            shoulderR.rotation.x = -0.75 - tilt * 0.22;
+            // Deep crouched soil/berry gathering
+            const pick = Math.sin(animTimeSec * 5.2 + v.animPhase);
+            legDip = 0.24;
+            bodyY -= 0.04;
+            spineRotX = 0.42 + pick * 0.06;
+            shoulderL.rotation.set(-0.98 + pick * 0.32, 0, 0);
+            shoulderR.rotation.set(-0.98 - pick * 0.32, 0, 0);
+            if (forearmL) forearmL.rotation.x = -0.55;
+            if (forearmR) forearmR.rotation.x = -0.55;
+            headRotX = 0.22;
+          } else if (isStationWork) {
+            // Rhythmic kneading / smithing / tending workbench motion
+            const work = Math.sin(animTimeSec * 5.8 + v.animPhase);
+            spineRotX = 0.16;
+            shoulderL.rotation.set(-0.82 + work * 0.22, 0.16, 0);
+            shoulderR.rotation.set(-0.82 - work * 0.22, -0.16, 0);
+            if (forearmL) forearmL.rotation.x = -0.68 - work * 0.18;
+            if (forearmR) forearmR.rotation.x = -0.68 + work * 0.18;
+            headRotX = 0.14;
+          } else if (isEating) {
+            // Lifting bite to mouth & happy chewing nod
+            const bite = Math.max(0, Math.sin(animTimeSec * 4.4 + v.animPhase));
+            shoulderL.rotation.set(-0.42, 0, 0);
+            shoulderR.rotation.set(-0.95 - bite * 0.35, -0.25, 0);
+            if (forearmR) forearmR.rotation.x = -1.15 - bite * 0.25;
+            headRotX = 0.1 + Math.sin(animTimeSec * 9.5) * 0.06;
+          } else if (isFestival) {
+            // Joyful rhythmic hop & raised-arm dance sway
+            const hop = Math.abs(Math.sin(animTimeSec * 5.4 + v.animPhase));
+            const sway = Math.sin(animTimeSec * 2.7 + v.animPhase);
+            bodyY += hop * 0.14;
+            spineRotZ = sway * 0.1;
+            shoulderL.rotation.set(-1.35 + sway * 0.3, 0, 0.38);
+            shoulderR.rotation.set(-1.35 - sway * 0.3, 0, -0.38);
+            headRotZ = -sway * 0.12;
+          } else if (isStudy) {
+            const tilt = Math.sin(animTimeSec * 2.3 + v.animPhase);
+            spineRotX = 0.12;
+            shoulderL.rotation.set(-0.55 + tilt * 0.12, 0.18, 0);
+            shoulderR.rotation.set(-1.05, -0.28, 0);
+            if (forearmR) forearmR.rotation.x = -1.2;
+            headRotX = 0.18 + tilt * 0.06;
+            headRotZ = tilt * 0.08;
+          } else if (isSocial) {
+            const gesture = Math.sin(animTimeSec * 3.8 + v.animPhase);
+            shoulderL.rotation.set(-0.52 + gesture * 0.28, 0.12, 0.08);
+            shoulderR.rotation.set(-0.68 - gesture * 0.32, -0.12, -0.08);
+            if (forearmL) forearmL.rotation.x = -0.65;
+            if (forearmR) forearmR.rotation.x = -0.75;
+            headRotX = Math.sin(animTimeSec * 3.1 + v.animPhase) * 0.1;
+            headRotY = Math.cos(animTimeSec * 1.9 + v.animPhase) * 0.18;
+          } else if (isSoaking) {
+            legDip = 0.95;
+            shoulderL.rotation.set(-0.35, 0, 0.42);
+            shoulderR.rotation.set(-0.35, 0, -0.42);
+            headRotX = -0.14;
+          } else if (isSleeping) {
+            bodyY = -0.04;
+            spineRotX = 0.28;
+            shoulderL.rotation.set(-0.55, 0, 0.12);
+            shoulderR.rotation.set(-0.55, 0, -0.12);
+            headRotZ = 0.22;
+          } else if (isHauling) {
+            // Arms cradle front cargo sack while walking
+            shoulderL.rotation.set(-0.78, 0.24, 0);
+            shoulderR.rotation.set(-0.78, -0.24, 0);
+            if (forearmL) forearmL.rotation.x = -0.72;
+            if (forearmR) forearmR.rotation.x = -0.72;
+            spineRotX = 0.16;
+          } else if (isGuardReady && v.weaponType !== 'none') {
+            // Weapon held at the ready while patrolling or standing watch
+            shoulderL.rotation.set(-swing * 0.65 - 0.15, 0, 0.08);
+            shoulderR.rotation.set(swing * 0.35 - 0.58, -0.12, -0.08);
+            if (forearmR) forearmR.rotation.x = -0.58;
+            if (isResting) headRotY = Math.sin(animTimeSec * 1.1 + v.animPhase) * 0.25;
           } else {
             shoulderL.rotation.x = -swing * 0.85;
             shoulderR.rotation.x = swing * 0.85;
             if (forearmL) forearmL.rotation.x = -0.3 + Math.abs(swing) * 0.2;
             if (forearmR) forearmR.rotation.x = -0.3 + Math.abs(swing) * 0.2;
+            if (isResting) headRotY = Math.sin(animTimeSec * 1.05 + v.animPhase) * 0.22;
           }
         }
 
+        if (hipL) hipL.rotation.x = isSleeping ? -0.75 : isSoaking ? -1.1 : swing - legDip;
+        if (calfL) calfL.rotation.x = isSleeping ? 0.2 : isSoaking ? 0.85 : kneeBendL + legDip * 1.4;
+        if (hipR) hipR.rotation.x = isSleeping ? -0.75 : isSoaking ? -1.1 : -swing - legDip;
+        if (calfR) calfR.rotation.x = isSleeping ? 0.2 : isSoaking ? 0.85 : kneeBendR + legDip * 1.4;
+
         if (headGroup) {
-          headGroup.rotation.x = isStudyOrSocial ? Math.sin(animTimeSec * 3.1 + v.animPhase) * 0.12 : 0;
-          headGroup.rotation.z = 0;
+          headGroup.rotation.set(headRotX, headRotY, headRotZ);
         }
-
         if (spine) {
-          const inspectTilt = v.state === 'inspecting' && !moving ? 0.16 : 0;
-          const workLean = isGatherWork ? 0.28 : isPickWork || isAxeWork ? 0.18 : 0;
-          spine.rotation.x = w * 0.12 + (isSleeping ? 0.24 : inspectTilt || workLean);
+          spine.rotation.set(spineRotX, spineRotY, spineRotZ);
         }
-
         if (bodyWrap) {
-          bodyWrap.position.y = stepBob + (isSleeping ? -0.04 : breath);
+          bodyWrap.position.y = bodyY;
         }
       }
 
@@ -1485,10 +1810,17 @@ export class LowPolyDioramaRenderer {
       const axeGroup = g.userData.axeGroup as THREE.Object3D | undefined;
       const pickaxeGroup = g.userData.pickaxeGroup as THREE.Object3D | undefined;
       const weaponGroup = g.userData.weaponGroup as THREE.Object3D | undefined;
+      const stowedWeaponGroup = g.userData.stowedWeaponGroup as THREE.Object3D | undefined;
+      const bowArrow = g.userData.bowArrow as THREE.Object3D | undefined;
+      const carriedBundle = g.userData.carriedBundle as THREE.Object3D | undefined;
+
       if (hammerGroup) hammerGroup.visible = isBuild;
       if (axeGroup) axeGroup.visible = isAxeWork;
       if (pickaxeGroup) pickaxeGroup.visible = isPickWork;
-      if (weaponGroup) weaponGroup.visible = !(isBuild || isAxeWork || isPickWork);
+      if (weaponGroup) weaponGroup.visible = isGuardReady;
+      if (stowedWeaponGroup) stowedWeaponGroup.visible = !isGuardReady;
+      if (bowArrow) bowArrow.visible = isCombat && v.weaponType === 'bow';
+      if (carriedBundle) carriedBundle.visible = isHauling;
 
       const rainHat = g.userData.rainHat as THREE.Object3D | undefined;
       if (rainHat) {
@@ -1671,7 +2003,10 @@ export class LowPolyDioramaRenderer {
       if (legFR) legFR.rotation.z = -trot;
       if (legBL) legBL.rotation.z = -trot;
       if (headGroup) {
-        headGroup.rotation.x = Math.sin(animTimeSec * 1.8 + l.x * 0.1) * 0.14 + (moving ? 0 : Math.sin(animTimeSec * 0.8) * 0.22);
+        // Pitch head forward/down to graze when stationary (+x is animal forward, so negative Z pitches down)
+        headGroup.rotation.z = moving
+          ? Math.sin(entry.phase) * 0.08
+          : -0.35 + Math.sin(animTimeSec * 2.2 + l.x * 0.1) * 0.16;
       }
     }
     for (const [id, entry] of this.livestockCache.entries()) {
@@ -1682,7 +2017,7 @@ export class LowPolyDioramaRenderer {
       }
     }
 
-    // Wild Herds
+    // Wild Herds (articulated leg trots, rabbit bounds, grazing/drinking dips, resting tucks, boar charges)
     const activeHerds = new Set<string>();
     for (const h of world.wildHerds) {
       activeHerds.add(h.id);
@@ -1710,13 +2045,81 @@ export class LowPolyDioramaRenderer {
       const stepDist = Math.hypot(dx, dz);
       const moving = stepDist / Math.max(0.008, dt) > 0.08;
       entry.moveWeight += ((moving ? 1 : 0) - entry.moveWeight) * weightAlpha;
-      if (moving) entry.phase += Math.min(0.85, stepDist * 6.5);
+      const paceMult = h.behaviorState === 'fleeing' || h.behaviorState === 'fighting' ? 1.45 : 1.0;
+      if (moving) entry.phase += Math.min(0.95, stepDist * 6.5 * paceMult);
       entry.yaw = dampAngle(entry.yaw, stepDist > 0.002 ? Math.atan2(-dz, dx) : h.facing >= 0 ? 0 : Math.PI, yawAlpha);
       entry.gy += (groundHeightAtSim(h.x, h.y) - entry.gy) * heightAlpha;
 
-      const hop = h.kind === 'rabbit' ? Math.max(0, Math.sin(entry.phase)) * 0.18 * entry.moveWeight : Math.abs(Math.sin(entry.phase)) * 0.05 * entry.moveWeight;
-      entry.group.position.set(wx, entry.gy + hop, wz);
+      const isResting = h.behaviorState === 'resting' && !moving;
+      const isGrazing = (h.behaviorState === 'grazing' || h.behaviorState === 'drinking') && !moving;
+      const isFighting = h.behaviorState === 'fighting';
+      const isMating = h.behaviorState === 'mating';
+
+      let hopY = 0;
+      if (h.kind === 'rabbit') {
+        hopY = Math.max(0, Math.sin(entry.phase)) * (h.behaviorState === 'fleeing' ? 0.24 : 0.16) * entry.moveWeight;
+        if (isMating && !moving) hopY += Math.max(0, Math.sin(animTimeSec * 6.5 + h.x)) * 0.09;
+      } else {
+        hopY = Math.abs(Math.sin(entry.phase)) * 0.055 * entry.moveWeight;
+      }
+      const restDrop = isResting ? (h.kind === 'deer' ? -0.18 : -0.09) : 0;
+      entry.group.position.set(wx, entry.gy + hopY + restDrop, wz);
       entry.group.rotation.y = entry.yaw;
+
+      const g = entry.group;
+      const bodyWrap = g.userData.bodyWrap as THREE.Object3D | undefined;
+      const headGroup = g.userData.headGroup as THREE.Object3D | undefined;
+      const legFL = g.userData.legFL as THREE.Object3D | undefined;
+      const legFR = g.userData.legFR as THREE.Object3D | undefined;
+      const legBL = g.userData.legBL as THREE.Object3D | undefined;
+      const legBR = g.userData.legBR as THREE.Object3D | undefined;
+      const earL = g.userData.earL as THREE.Object3D | undefined;
+      const earR = g.userData.earR as THREE.Object3D | undefined;
+      const tail = g.userData.tail as THREE.Object3D | undefined;
+
+      if (h.kind === 'rabbit') {
+        const bound = Math.sin(entry.phase) * entry.moveWeight;
+        if (bodyWrap) bodyWrap.rotation.z = bound * 0.22;
+        if (legFL) legFL.rotation.z = bound * 0.72;
+        if (legFR) legFR.rotation.z = bound * 0.72;
+        if (legBL) legBL.rotation.z = -bound * 0.85;
+        if (legBR) legBR.rotation.z = -bound * 0.85;
+        if (earL && earR) {
+          const earTwitch = Math.sin(animTimeSec * 5.2 + h.y) * 0.18;
+          earL.rotation.z = h.behaviorState === 'fleeing' ? 0.45 : -0.1 + earTwitch;
+          earR.rotation.z = h.behaviorState === 'fleeing' ? 0.45 : -0.1 - earTwitch * 0.7;
+        }
+      } else {
+        const trot = Math.sin(entry.phase) * (h.behaviorState === 'fleeing' ? 0.72 : 0.56) * entry.moveWeight;
+        if (legFL) legFL.rotation.z = isResting ? 0.75 : trot;
+        if (legBR) legBR.rotation.z = isResting ? -0.75 : trot;
+        if (legFR) legFR.rotation.z = isResting ? 0.75 : -trot;
+        if (legBL) legBL.rotation.z = isResting ? -0.75 : -trot;
+        if (bodyWrap) {
+          bodyWrap.rotation.z = isFighting ? Math.sin(animTimeSec * 9.5) * 0.14 : 0;
+          bodyWrap.position.x = isFighting ? Math.max(0, Math.sin(animTimeSec * 9.5)) * 0.14 : 0;
+        }
+      }
+
+      if (headGroup) {
+        if (isGrazing) {
+          headGroup.rotation.z = -0.52 + Math.sin(animTimeSec * 3.4 + h.x * 0.2) * 0.16;
+          headGroup.rotation.y = Math.sin(animTimeSec * 1.4 + h.y) * 0.18;
+        } else if (isFighting) {
+          headGroup.rotation.z = -0.34 + Math.sin(animTimeSec * 9.5) * 0.24;
+          headGroup.rotation.y = 0;
+        } else if (isResting) {
+          headGroup.rotation.z = -0.14;
+          headGroup.rotation.y = Math.sin(animTimeSec * 1.1 + h.x) * 0.22;
+        } else {
+          headGroup.rotation.z = Math.sin(entry.phase) * 0.08 * entry.moveWeight + Math.sin(animTimeSec * 2 + h.x) * 0.04;
+          headGroup.rotation.y = !moving ? Math.sin(animTimeSec * 1.5 + h.x) * 0.25 : 0;
+        }
+      }
+
+      if (tail) {
+        tail.rotation.x = Math.sin(animTimeSec * (isMating ? 8.5 : 3.2) + h.y) * 0.24;
+      }
     }
     for (const [id, entry] of this.wildHerdCache.entries()) {
       if (!activeHerds.has(id)) {
@@ -2027,7 +2430,17 @@ export class LowPolyDioramaRenderer {
     this.sunLight.intensity = atmo.sunIntensity * wind.cloudShadowFactor * (isRuinedMood ? 0.82 : 1);
 
     this.rimLight.color.setHex(atmo.rimHex);
-    this.rimLight.intensity = 0.45 + (1 - atmo.nightFactor) * 0.25;
+    this.rimLight.intensity = 0.22 + (1 - atmo.nightFactor) * 0.12;
+
+    // Anchor subtle warm forest sunbeams above the focused island clearing
+    const weatherBeamMult = weather === 'rain' ? 0 : weather === 'mist' ? 0.55 : 1.0;
+    const beamAlpha = Math.max(0, 1 - atmo.nightFactor * 1.45) * weatherBeamMult * (isRuinedMood ? 0.18 : 0.08) * wind.cloudShadowFactor;
+    this.sunbeamsGroup.visible = beamAlpha > 0.01 && !this.isSoftwareGl;
+    if (this.sunbeamsGroup.visible) {
+      this.sunbeamsGroup.position.set(tx, ty - 0.5, tz);
+      this.sunbeamMat.opacity = beamAlpha;
+      this.sunbeamMat.color.setHex(atmo.sunHex);
+    }
 
     const sunAngle = (atmo.sunProgress - 0.5) * Math.PI * 0.72;
     this.celestialOrb.position.set(Math.sin(sunAngle) * 280, 76 + Math.cos(sunAngle) * 38, -320);
@@ -2108,10 +2521,12 @@ export class LowPolyDioramaRenderer {
       if (wingR) wingR.rotation.z = -flap;
     }
 
-    this.ensureIslands(season, weather);
-    this.ensureSprings(lampsLit);
-    this.ensureLandmarks(season, weather);
-    this.ensureScatter(season, weather);
+    const worldSeed = world.worldSeed ?? 104729;
+    this.ensureIslands(worldSeed, season, weather);
+    this.ensureWaterAndFalls(worldSeed, season);
+    this.ensureSprings(worldSeed, lampsLit);
+    this.ensureLandmarks(worldSeed, season, weather);
+    this.ensureScatter(worldSeed, season, weather);
     this.syncExploreRuins(world, atmo.nightFactor, animTimeSec);
     this.syncBridges(world, lampsLit);
     this.syncCableways(world, lampsLit);
@@ -2263,6 +2678,7 @@ export class LowPolyDioramaRenderer {
     this.terrainMat.dispose();
     this.waterMesh.geometry.dispose();
     this.waterMat.dispose();
+    this.fallMat.dispose();
     this.skyDome.geometry.dispose();
     this.skyMat.dispose();
 
@@ -2277,8 +2693,12 @@ export class LowPolyDioramaRenderer {
 
     this.contactShadowTex.dispose();
     this.contactShadowMat.dispose();
+    this.terrainDetailTex.dispose();
+    this.sunbeamTex.dispose();
+    this.sunbeamMat.dispose();
 
     disposeGroupGeometries(this.islandsGroup);
+    disposeGroupGeometries(this.sunbeamsGroup);
     disposeGroupGeometries(this.waterfallsGroup);
     disposeGroupGeometries(this.springsGroup);
     disposeGroupGeometries(this.landmarksGroup);

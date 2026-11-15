@@ -568,11 +568,42 @@ var VILLAGE_CUSTOM_META = {
 // src/game/catalog.ts
 var WORLD_WIDTH = 7600;
 var WORLD_HEIGHT = 5200;
+var WORLD_SCALE = 0.085;
 var CURRENT_WORLD_VERSION = 9;
-function islandCoastWobble(def, angleRad) {
-  return 1 + Math.sin(angleRad * 5 + def.centerX * 0.01) * 0.06 + Math.cos(angleRad * 3 - def.centerY * 0.01) * 0.04;
+var DEFAULT_WORLD_SEED = 104729;
+function mulberry32(seed) {
+  let a = (Math.floor(Math.abs(seed)) || 1) >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
 }
-function getIslandRimPoint(def, angleRad, radiusFraction = 0.96) {
+function wrapAngleDiff(a, b) {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+function islandCoastWobble(def, angleRad) {
+  const rot = def.coastRotRad ?? 0;
+  const a = angleRad - rot;
+  const seedBase = def.coastSeed ?? Math.round(def.centerX * 13 + def.centerY * 17);
+  const p1 = seedBase % 997 * 0.017;
+  const p2 = seedBase * 7 % 991 * 0.019;
+  const p3 = seedBase * 13 % 983 * 0.023;
+  const p4 = seedBase * 29 % 977 * 0.031;
+  let wobble = 1 + Math.sin(a * 2 + p1) * 0.068 + Math.cos(a * 3 - p2) * 0.056 + Math.sin(a * 5 + p3) * 0.036 + Math.cos(a * 7 - p4) * 0.018;
+  if (def.coveAngles && def.coveAngles.length > 0) {
+    for (let i = 0; i < def.coveAngles.length; i++) {
+      const diff = Math.abs(wrapAngleDiff(angleRad, def.coveAngles[i]));
+      if (diff < 0.44) {
+        wobble -= Math.exp(-(diff * diff) / 0.036) * 0.135;
+      }
+    }
+  }
+  return Math.max(0.75, Math.min(1.24, wobble));
+}
+function getIslandRimPoint(def, angleRad, radiusFraction = 0.94) {
   const wobble = islandCoastWobble(def, angleRad) * radiusFraction;
   return {
     x: Math.round(def.centerX + Math.cos(angleRad) * def.radiusX * wobble),
@@ -580,244 +611,189 @@ function getIslandRimPoint(def, angleRad, radiusFraction = 0.96) {
   };
 }
 function createDockSpot(def, angleRad) {
-  const wobble = 1 + Math.sin(angleRad * 5 + def.centerX * 0.01) * 0.06 + Math.cos(angleRad * 3 - def.centerY * 0.01) * 0.04;
+  const wobble = islandCoastWobble(def, angleRad);
   const rx = def.radiusX * wobble;
   const ry = def.radiusY * wobble;
   return {
-    x: Math.round(def.centerX + Math.cos(angleRad) * rx * 0.95),
-    y: Math.round(def.centerY + Math.sin(angleRad) * ry * 0.95),
-    seaX: Math.round(def.centerX + Math.cos(angleRad) * (rx + 170)),
-    seaY: Math.round(def.centerY + Math.sin(angleRad) * (ry + 170))
+    x: Math.round(def.centerX + Math.cos(angleRad) * rx * 0.87),
+    y: Math.round(def.centerY + Math.sin(angleRad) * ry * 0.87),
+    seaX: Math.round(def.centerX + Math.cos(angleRad) * (rx + 185)),
+    seaY: Math.round(def.centerY + Math.sin(angleRad) * (ry + 185))
   };
 }
-function makeIsland(spec, dockAngleRad) {
-  return {
-    ...spec,
-    dockSpot: createDockSpot(spec, dockAngleRad)
-  };
+function buildSplineRiverPoints(radiusX, radiusY, wobbleAtAngle, startDx, startDy, exitAngle, rng, bendSign, steps = 9) {
+  const rimWob = wobbleAtAngle(exitAngle);
+  const endDx = Math.cos(exitAngle) * radiusX * rimWob * 1.07;
+  const endDy = Math.sin(exitAngle) * radiusY * rimWob * 1.07;
+  const chordX = endDx - startDx;
+  const chordY = endDy - startDy;
+  const chordLen = Math.hypot(chordX, chordY) || 1;
+  const perpX = -chordY / chordLen;
+  const perpY = chordX / chordLen;
+  const meanderAmp = (0.14 + rng() * 0.14) * chordLen * bendSign;
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const envelope = Math.sin(t * Math.PI);
+    const sWave = Math.sin(t * Math.PI * 1.65) * meanderAmp * envelope;
+    let dx = startDx + chordX * t + perpX * sWave;
+    let dy = startDy + chordY * t + perpY * sWave;
+    const dCenter = Math.hypot(dx, dy);
+    const minCenterClear = 152;
+    if (i > 0 && i < steps && dCenter < minCenterClear) {
+      const pushAng = Math.atan2(dy || perpY, dx || perpX);
+      dx = Math.cos(pushAng) * minCenterClear;
+      dy = Math.sin(pushAng) * minCenterClear;
+    }
+    pts.push({ dx: Math.round(dx), dy: Math.round(dy) });
+  }
+  return pts;
 }
-var ISLAND_DEFS = {
-  cradle: makeIsland(
-    {
-      id: "cradle",
-      name: "Cradle Isle",
-      subtitle: "Sunlit meadow basin with mossy spring, winding stream, boulders & rising northern bluff.",
-      biome: "meadow",
-      terrainStyle: "basin",
-      roleTag: "homeland",
-      centerX: 2950,
-      centerY: 2780,
-      radiusX: 760,
-      radiusY: 520,
-      elevationY: 0.78,
-      defaultCultureId: "hearthfolk",
-      hasSpring: true,
-      springOffset: { dx: -235, dy: -135 },
-      hasWaterfall: true,
-      waterfallAngle: 0.92,
-      rivers: [
-        {
-          width: 44,
-          points: [
-            { dx: -235, dy: -135 },
-            { dx: -90, dy: -35 },
-            { dx: 85, dy: 90 },
-            { dx: 290, dy: 270 },
-            { dx: 455, dy: 385 }
-          ]
-        }
-      ],
-      oreRichness: "stone",
-      soilQuality: 0.95
-    },
-    0.18
-  ),
-  timbercrown: makeIsland(
-    {
-      id: "timbercrown",
-      name: "Timbercrown Cliffside",
-      subtitle: "Sheer multi-tiered cedar cliffside escarpment home to the Cedarwood Sylvans.",
-      biome: "pine",
-      terrainStyle: "cliffside",
-      roleTag: "timber",
-      centerX: 1420,
-      centerY: 1820,
-      radiusX: 850,
-      radiusY: 430,
-      elevationY: 6.2,
-      defaultCultureId: "sylvan",
-      hasSpring: true,
-      springOffset: { dx: 185, dy: 95 },
-      hasWaterfall: true,
-      waterfallAngle: 0.72,
-      oreRichness: "stone",
-      soilQuality: 0.85
-    },
-    2.82
-  ),
-  sunterrace: makeIsland(
-    {
-      id: "sunterrace",
-      name: "Sun-Terrace Rivers",
-      subtitle: "Sprawling three-river valley of golden loam terraces, rich harvests & cascading channels.",
-      biome: "terrace",
-      terrainStyle: "multi_river",
-      roleTag: "harvest",
-      centerX: 4620,
-      centerY: 3640,
-      radiusX: 950,
-      radiusY: 650,
-      elevationY: 1.05,
-      defaultCultureId: "hearthfolk",
-      hasSpring: true,
-      springOffset: { dx: -210, dy: -165 },
-      hasWaterfall: true,
-      waterfallAngle: 0.45,
-      rivers: [
-        {
-          width: 54,
-          points: [
-            { dx: -520, dy: -260 },
-            { dx: -210, dy: -165 },
-            { dx: 40, dy: -30 },
-            { dx: 360, dy: 120 },
-            { dx: 790, dy: 250 }
-          ]
-        },
-        {
-          width: 46,
-          points: [
-            { dx: -210, dy: -165 },
-            { dx: -165, dy: 45 },
-            { dx: -40, dy: 255 },
-            { dx: 150, dy: 525 }
-          ]
-        },
-        {
-          width: 40,
-          points: [
-            { dx: 40, dy: -30 },
-            { dx: 225, dy: -195 },
-            { dx: 510, dy: -340 }
-          ]
-        }
-      ],
-      oreRichness: "none",
-      soilQuality: 1.32
-    },
-    -0.42
-  ),
-  coppercrag: makeIsland(
-    {
-      id: "coppercrag",
-      name: "Copper-Crag Spire",
-      subtitle: "Steep basalt caldera & mineral crags settled by the Cragforge Smiths.",
-      biome: "crag",
-      terrainStyle: "caldera",
-      roleTag: "forge",
-      centerX: 4180,
-      centerY: 1340,
-      radiusX: 610,
-      radiusY: 445,
-      elevationY: 6.9,
-      defaultCultureId: "cragforge",
-      hasSpring: false,
-      hasWaterfall: true,
-      waterfallAngle: 1.56,
-      oreRichness: "rich_metals",
-      soilQuality: 0.55
-    },
-    1.57
-  ),
-  mistatoll: makeIsland(
-    {
-      id: "mistatoll",
-      name: "Outer Mist Atoll",
-      subtitle: "Compact crescent sea-cliff lagoon reachable only by boat, glider, or sky-cable.",
-      biome: "mist_atoll",
-      terrainStyle: "atoll",
-      roleTag: "harbor",
-      centerX: 5960,
-      centerY: 2660,
-      radiusX: 500,
-      radiusY: 380,
-      elevationY: 0.65,
-      defaultCultureId: "mist_mariner",
-      hasSpring: true,
-      springOffset: { dx: 115, dy: -85 },
-      hasWaterfall: false,
-      oreRichness: "stone",
-      soilQuality: 0.8
-    },
-    3.1
-  ),
-  starbloom: makeIsland(
-    {
-      id: "starbloom",
-      name: "Starbloom Ruins",
-      subtitle: "Jade-meadow exploration sanctuary dotted with starlight obelisks, orchards & healing springs.",
-      biome: "ruins",
-      terrainStyle: "ruins",
-      roleTag: "exploration",
-      centerX: 1460,
-      centerY: 3960,
-      radiusX: 680,
-      radiusY: 500,
-      elevationY: 2.05,
-      defaultCultureId: "hearthfolk",
-      hasSpring: true,
-      springOffset: { dx: -135, dy: 85 },
-      hasWaterfall: true,
-      waterfallAngle: 2.35,
-      oreRichness: "stone",
-      soilQuality: 1.15
-    },
-    0.1
-  ),
-  embervault: makeIsland(
-    {
-      id: "embervault",
-      name: "Ashen Bastion",
-      subtitle: "Unbridged volcanic fortress holding rich iron vaults\u2014guarded by the hostile Ashen Bastion.",
-      biome: "volcanic",
-      terrainStyle: "volcanic",
-      roleTag: "battle",
-      centerX: 6140,
-      centerY: 1080,
-      radiusX: 650,
-      radiusY: 460,
-      elevationY: 4.8,
-      defaultCultureId: "ashen_raider",
-      hasSpring: false,
-      hasWaterfall: false,
-      oreRichness: "rich_metals",
-      soilQuality: 0.45
-    },
-    1.75
-  ),
-  frostpeak: makeIsland(
-    {
-      id: "frostpeak",
-      name: "Frostpeak Massif",
-      subtitle: "Towering unbridged mountain island of jagged alpine peaks, passes, iron veins & snow shrines.",
-      biome: "frost",
-      terrainStyle: "mountain",
-      roleTag: "alpine",
-      centerX: 2320,
-      centerY: 860,
-      radiusX: 790,
-      radiusY: 555,
-      elevationY: 8.8,
-      defaultCultureId: "cragforge",
-      hasSpring: true,
-      springOffset: { dx: 140, dy: 95 },
-      hasWaterfall: true,
-      waterfallAngle: 1.95,
-      oreRichness: "rich_metals",
-      soilQuality: 0.4
-    },
-    1.22
-  )
+var ARCHIPELAGO_TEMPLATES = {
+  cradle: {
+    id: "cradle",
+    name: "Cradle Isle",
+    subtitle: "Sunlit meadow basin with mossy spring, winding stream & sheltered coastal coves.",
+    biome: "meadow",
+    terrainStyle: "basin",
+    roleTag: "homeland",
+    baseRx: 780,
+    baseRy: 550,
+    baseElev: 0.72,
+    defaultCultureId: "hearthfolk",
+    hasSpring: true,
+    hasWaterfall: false,
+    riverCountRange: [1, 2],
+    ringBand: "center",
+    oreRichness: "stone",
+    soilQuality: 0.95
+  },
+  timbercrown: {
+    id: "timbercrown",
+    name: "Timbercrown Cliffside",
+    subtitle: "Steep cedar cliffside escarpment home to the Cedarwood Sylvans.",
+    biome: "pine",
+    terrainStyle: "cliffside",
+    roleTag: "timber",
+    baseRx: 840,
+    baseRy: 470,
+    baseElev: 5.6,
+    defaultCultureId: "sylvan",
+    hasSpring: true,
+    hasWaterfall: true,
+    riverCountRange: [1, 1],
+    ringBand: "inner",
+    oreRichness: "stone",
+    soilQuality: 0.85
+  },
+  sunterrace: {
+    id: "sunterrace",
+    name: "Sun-Terrace Rivers",
+    subtitle: "Expansive multi-river valley of fertile golden loam, coastal estuaries & cascades.",
+    biome: "terrace",
+    terrainStyle: "multi_river",
+    roleTag: "harvest",
+    baseRx: 940,
+    baseRy: 640,
+    baseElev: 0.92,
+    defaultCultureId: "hearthfolk",
+    hasSpring: true,
+    hasWaterfall: false,
+    riverCountRange: [2, 3],
+    ringBand: "inner",
+    oreRichness: "none",
+    soilQuality: 1.32
+  },
+  starbloom: {
+    id: "starbloom",
+    name: "Starbloom Ruins",
+    subtitle: "Jade-meadow exploration sanctuary with ancient ruins, rivers, orchards & spring coves.",
+    biome: "ruins",
+    terrainStyle: "ruins",
+    roleTag: "exploration",
+    baseRx: 700,
+    baseRy: 515,
+    baseElev: 1.45,
+    defaultCultureId: "hearthfolk",
+    hasSpring: true,
+    hasWaterfall: true,
+    riverCountRange: [1, 1],
+    ringBand: "inner",
+    oreRichness: "stone",
+    soilQuality: 1.15
+  },
+  coppercrag: {
+    id: "coppercrag",
+    name: "Copper-Crag Spire",
+    subtitle: "Steep basalt caldera & mineral crags settled by the Cragforge Smiths.",
+    biome: "crag",
+    terrainStyle: "caldera",
+    roleTag: "forge",
+    baseRx: 620,
+    baseRy: 460,
+    baseElev: 6.4,
+    defaultCultureId: "cragforge",
+    hasSpring: false,
+    hasWaterfall: true,
+    riverCountRange: [0, 0],
+    ringBand: "outer",
+    oreRichness: "rich_metals",
+    soilQuality: 0.55
+  },
+  mistatoll: {
+    id: "mistatoll",
+    name: "Outer Mist Atoll",
+    subtitle: "Crescent sea-cliff lagoon opening into tranquil turquoise shoals.",
+    biome: "mist_atoll",
+    terrainStyle: "atoll",
+    roleTag: "harbor",
+    baseRx: 540,
+    baseRy: 410,
+    baseElev: 0.62,
+    defaultCultureId: "mist_mariner",
+    hasSpring: true,
+    hasWaterfall: false,
+    riverCountRange: [0, 0],
+    ringBand: "outer",
+    oreRichness: "stone",
+    soilQuality: 0.8
+  },
+  embervault: {
+    id: "embervault",
+    name: "Ashen Bastion",
+    subtitle: "Unbridged volcanic fortress holding rich iron vaults\u2014guarded by the hostile Ashen Bastion.",
+    biome: "volcanic",
+    terrainStyle: "volcanic",
+    roleTag: "battle",
+    baseRx: 660,
+    baseRy: 480,
+    baseElev: 4.5,
+    defaultCultureId: "ashen_raider",
+    hasSpring: false,
+    hasWaterfall: false,
+    riverCountRange: [0, 0],
+    ringBand: "outer",
+    oreRichness: "rich_metals",
+    soilQuality: 0.45
+  },
+  frostpeak: {
+    id: "frostpeak",
+    name: "Frostpeak Massif",
+    subtitle: "Towering unbridged alpine massif with snow ridges, mountain stream & iron veins.",
+    biome: "frost",
+    terrainStyle: "mountain",
+    roleTag: "alpine",
+    baseRx: 780,
+    baseRy: 560,
+    baseElev: 8.2,
+    defaultCultureId: "cragforge",
+    hasSpring: true,
+    hasWaterfall: true,
+    riverCountRange: [0, 1],
+    ringBand: "outer",
+    oreRichness: "rich_metals",
+    soilQuality: 0.4
+  }
 };
 var ISLAND_ORDER = [
   "cradle",
@@ -829,6 +805,226 @@ var ISLAND_ORDER = [
   "embervault",
   "frostpeak"
 ];
+function shuffleWithRng(items, rng) {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+function generateSeededArchipelago(seed) {
+  const rng = mulberry32(seed);
+  const placed = {};
+  const marginX = 760;
+  const marginY = 660;
+  const cradleTpl = ARCHIPELAGO_TEMPLATES.cradle;
+  const cradleRx = Math.round(cradleTpl.baseRx * (0.9 + rng() * 0.2));
+  const cradleRy = Math.round(cradleTpl.baseRy * (0.9 + rng() * 0.2));
+  const cradleCx = Math.round(2850 + rng() * 1900);
+  const cradleCy = Math.round(2050 + rng() * 1100);
+  placed.cradle = { centerX: cradleCx, centerY: cradleCy, radiusX: cradleRx, radiusY: cradleRy };
+  const overlapsAny = (cx, cy, rx, ry, minGap) => {
+    if (cx - rx < marginX || cx + rx > WORLD_WIDTH - marginX) return true;
+    if (cy - ry < marginY || cy + ry > WORLD_HEIGHT - marginY) return true;
+    for (const p of Object.values(placed)) {
+      if (!p) continue;
+      const dx = cx - p.centerX;
+      const dy = cy - p.centerY;
+      const nx = dx / (rx + p.radiusX + minGap);
+      const ny = dy / (ry + p.radiusY + minGap);
+      if (nx * nx + ny * ny < 1.05) return true;
+    }
+    return false;
+  };
+  const innerIds = shuffleWithRng(["timbercrown", "sunterrace", "starbloom"], rng);
+  const outerIds = shuffleWithRng(["coppercrag", "mistatoll", "embervault", "frostpeak"], rng);
+  const baseInnerPhase = rng() * Math.PI * 2;
+  const baseOuterPhase = rng() * Math.PI * 2;
+  const placeRing = (ids, baseAngle, distMin, distMax) => {
+    for (let idx = 0; idx < ids.length; idx++) {
+      const id = ids[idx];
+      const tpl = ARCHIPELAGO_TEMPLATES[id];
+      const rx = Math.round(tpl.baseRx * (0.86 + rng() * 0.26));
+      const ry = Math.round(tpl.baseRy * (0.86 + rng() * 0.26));
+      let chosenX = cradleCx + 1500;
+      let chosenY = cradleCy;
+      let found = false;
+      for (const gap of [300, 220, 150]) {
+        for (let attempt = 0; attempt < 90; attempt++) {
+          const sectorAng = baseAngle + idx / ids.length * Math.PI * 2 + (rng() - 0.5) * (attempt < 24 ? 0.85 : Math.PI * 1.4);
+          const dist = distMin + rng() * (distMax - distMin);
+          const cx = Math.round(cradleCx + Math.cos(sectorAng) * dist * 1.24);
+          const cy = Math.round(cradleCy + Math.sin(sectorAng) * dist * 0.92);
+          if (!overlapsAny(cx, cy, rx, ry, gap)) {
+            chosenX = cx;
+            chosenY = cy;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (!found) {
+        for (let attempt = 0; attempt < 220; attempt++) {
+          const cx = Math.round(marginX + rx + rng() * (WORLD_WIDTH - (marginX + rx) * 2));
+          const cy = Math.round(marginY + ry + rng() * (WORLD_HEIGHT - (marginY + ry) * 2));
+          if (!overlapsAny(cx, cy, rx, ry, 140)) {
+            chosenX = cx;
+            chosenY = cy;
+            break;
+          }
+        }
+      }
+      placed[id] = { centerX: chosenX, centerY: chosenY, radiusX: rx, radiusY: ry };
+    }
+  };
+  placeRing(innerIds, baseInnerPhase, 1380, 1850);
+  placeRing(outerIds, baseOuterPhase, 2250, 3200);
+  const defs = {};
+  for (const id of ISLAND_ORDER) {
+    const tpl = ARCHIPELAGO_TEMPLATES[id];
+    const box = placed[id];
+    const coastSeed = Math.floor(rng() * 1e6) + 1;
+    const coastRotRad = Number((rng() * Math.PI * 2).toFixed(3));
+    const ridgeAngle = Number((rng() * Math.PI * 2).toFixed(3));
+    const elevationY = Number((tpl.baseElev * (0.88 + rng() * 0.24)).toFixed(2));
+    let springOffset;
+    if (tpl.hasSpring) {
+      const sAng = rng() * Math.PI * 2;
+      const sRad = 0.28 + rng() * 0.22;
+      let sdx = Math.round(Math.cos(sAng) * box.radiusX * sRad);
+      let sdy = Math.round(Math.sin(sAng) * box.radiusY * sRad);
+      if (Math.hypot(sdx, sdy) < 175) {
+        const push = 178 / Math.max(1, Math.hypot(sdx, sdy));
+        sdx = Math.round(sdx * push);
+        sdy = Math.round(sdy * push);
+      }
+      springOffset = { dx: sdx, dy: sdy };
+    }
+    const rawToCradle = id === "cradle" ? rng() * Math.PI * 2 : Math.atan2(cradleCy - box.centerY, cradleCx - box.centerX);
+    const dockAngleRad = rawToCradle + (rng() - 0.5) * 0.65;
+    let waterfallAngle;
+    if (tpl.hasWaterfall) {
+      waterfallAngle = dockAngleRad + (rng() > 0.5 ? 1 : -1) * (1.25 + rng() * 1.15);
+    }
+    const coveAngles = [dockAngleRad];
+    const riverMouthAngles = [];
+    const minRiv = tpl.riverCountRange[0];
+    const maxRiv = tpl.riverCountRange[1];
+    const riverCount = maxRiv > minRiv ? minRiv + Math.floor(rng() * (maxRiv - minRiv + 1)) : minRiv;
+    for (let r = 0; r < riverCount; r++) {
+      let mouthAng = r === 0 && waterfallAngle !== void 0 && (id === "timbercrown" || id === "frostpeak") ? waterfallAngle : dockAngleRad + Math.PI * (0.45 + r * 0.62) + (rng() - 0.5) * 0.42;
+      if (Math.abs(wrapAngleDiff(mouthAng, dockAngleRad)) < 0.52) {
+        mouthAng = dockAngleRad + (r % 2 === 0 ? 0.78 : -0.78);
+      }
+      riverMouthAngles.push(mouthAng);
+      if (!(tpl.hasWaterfall && waterfallAngle !== void 0 && Math.abs(wrapAngleDiff(mouthAng, waterfallAngle)) < 0.25)) {
+        coveAngles.push(mouthAng);
+      }
+    }
+    let lagoonOffset;
+    let trenchOffset;
+    if (id === "mistatoll") {
+      const lAng = dockAngleRad + (rng() - 0.5) * 0.5;
+      lagoonOffset = {
+        lx: Number((Math.cos(lAng) * 0.16).toFixed(3)),
+        ly: Number((Math.sin(lAng) * 0.16).toFixed(3))
+      };
+    } else if (id === "embervault") {
+      const tAng = rng() * Math.PI * 2;
+      trenchOffset = {
+        lx: Number((Math.cos(tAng) * 0.34).toFixed(3)),
+        ly: Number((Math.sin(tAng) * 0.34).toFixed(3))
+      };
+    }
+    const partialDef = {
+      id,
+      name: tpl.name,
+      subtitle: tpl.subtitle,
+      biome: tpl.biome,
+      terrainStyle: tpl.terrainStyle,
+      roleTag: tpl.roleTag,
+      centerX: box.centerX,
+      centerY: box.centerY,
+      radiusX: box.radiusX,
+      radiusY: box.radiusY,
+      elevationY,
+      defaultCultureId: tpl.defaultCultureId,
+      hasSpring: tpl.hasSpring,
+      springOffset,
+      hasWaterfall: tpl.hasWaterfall,
+      waterfallAngle,
+      coastSeed,
+      coastRotRad,
+      ridgeAngle,
+      coveAngles,
+      riverMouthAngles,
+      dockAngleRad,
+      lagoonOffset,
+      trenchOffset,
+      oreRichness: tpl.oreRichness,
+      soilQuality: tpl.soilQuality
+    };
+    const wobbleAt = (ang) => islandCoastWobble(partialDef, ang);
+    const rivers = [];
+    for (let r = 0; r < riverCount; r++) {
+      const mouthAng = riverMouthAngles[r];
+      let startDx;
+      let startDy;
+      if (r === 0 && springOffset) {
+        startDx = springOffset.dx;
+        startDy = springOffset.dy;
+      } else {
+        const headAng = mouthAng + Math.PI + (rng() - 0.5) * 0.7;
+        const headR = 0.26 + rng() * 0.24;
+        startDx = Math.round(Math.cos(headAng) * box.radiusX * headR);
+        startDy = Math.round(Math.sin(headAng) * box.radiusY * headR);
+      }
+      const width = id === "sunterrace" ? Math.round(48 + rng() * 14) : Math.round(38 + rng() * 12);
+      const pts = buildSplineRiverPoints(
+        box.radiusX,
+        box.radiusY,
+        wobbleAt,
+        startDx,
+        startDy,
+        mouthAng,
+        rng,
+        r % 2 === 0 ? 1 : -1
+      );
+      rivers.push({ width, points: pts });
+    }
+    if (rivers.length > 0) {
+      partialDef.rivers = rivers;
+    }
+    const ponds = [];
+    if (id === "cradle" || id === "sunterrace" || id === "starbloom") {
+      const pondAng = dockAngleRad + Math.PI * (0.72 + rng() * 0.56);
+      const pondR = 0.42 + rng() * 0.14;
+      const pdx = Math.round(Math.cos(pondAng) * box.radiusX * pondR);
+      const pdy = Math.round(Math.sin(pondAng) * box.radiusY * pondR);
+      if (!springOffset || Math.hypot(pdx - springOffset.dx, pdy - springOffset.dy) > 160) {
+        ponds.push({
+          dx: pdx,
+          dy: pdy,
+          rx: Math.round(42 + rng() * 22),
+          ry: Math.round(34 + rng() * 18)
+        });
+      }
+    }
+    if (ponds.length > 0) {
+      partialDef.ponds = ponds;
+    }
+    defs[id] = {
+      ...partialDef,
+      dockSpot: createDockSpot(partialDef, dockAngleRad)
+    };
+  }
+  return defs;
+}
+var ISLAND_DEFS = generateSeededArchipelago(DEFAULT_WORLD_SEED);
 var PLAYER_VILLAGE_ISLANDS = [
   "cradle",
   "sunterrace",
@@ -846,12 +1042,12 @@ function getSocialTier(score) {
   if (score < 90) return { id: "confidant", label: "Confidant", color: "#FDE68A" };
   return { id: "bonded", label: "Bonded Kin", color: "#F472B6" };
 }
-function createBridgeSpec(id, name, fromIsland, toIsland, tier, requiredTechId, costTimber, costStone) {
-  const fromDef = ISLAND_DEFS[fromIsland];
-  const toDef = ISLAND_DEFS[toIsland];
+function createBridgeSpec(id, name, fromIsland, toIsland, tier, requiredTechId, costTimber, costStone, defs = ISLAND_DEFS) {
+  const fromDef = defs[fromIsland];
+  const toDef = defs[toIsland];
   const ang = Math.atan2(toDef.centerY - fromDef.centerY, toDef.centerX - fromDef.centerX);
-  const p1 = getIslandRimPoint(fromDef, ang, 0.96);
-  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.96);
+  const p1 = getIslandRimPoint(fromDef, ang, 0.92);
+  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.92);
   return {
     id,
     name,
@@ -869,12 +1065,12 @@ function createBridgeSpec(id, name, fromIsland, toIsland, tier, requiredTechId, 
     costStone
   };
 }
-function createCablewaySpec(id, name, fromIsland, toIsland, requiredTechId, costTimber, costStone, costIron) {
-  const fromDef = ISLAND_DEFS[fromIsland];
-  const toDef = ISLAND_DEFS[toIsland];
+function createCablewaySpec(id, name, fromIsland, toIsland, requiredTechId, costTimber, costStone, costIron, defs = ISLAND_DEFS) {
+  const fromDef = defs[fromIsland];
+  const toDef = defs[toIsland];
   const ang = Math.atan2(toDef.centerY - fromDef.centerY, toDef.centerX - fromDef.centerX);
-  const p1 = getIslandRimPoint(fromDef, ang, 0.9);
-  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.9);
+  const p1 = getIslandRimPoint(fromDef, ang, 0.88);
+  const p2 = getIslandRimPoint(toDef, ang + Math.PI, 0.88);
   return {
     id,
     name,
@@ -895,90 +1091,118 @@ function createCablewaySpec(id, name, fromIsland, toIsland, requiredTechId, cost
     passengerIds: []
   };
 }
-var INITIAL_SKY_BRIDGES = [
-  createBridgeSpec(
-    "bridge_cradle_sun",
-    "Sun-Terrace Causeway",
-    "cradle",
-    "sunterrace",
-    1,
-    "rope_bridges",
-    26,
-    12
-  ),
-  createBridgeSpec(
-    "bridge_cradle_timber",
-    "Timbercrown Sky-Bridge",
-    "cradle",
-    "timbercrown",
-    1,
-    "rope_bridges",
-    32,
-    16
-  ),
-  createBridgeSpec(
-    "bridge_cradle_starbloom",
-    "Starbloom Pilgrim Span",
-    "cradle",
-    "starbloom",
-    1,
-    "rope_bridges",
-    28,
-    14
-  ),
-  createBridgeSpec(
-    "bridge_timber_crag",
-    "Copper-Crag High Arch",
-    "timbercrown",
-    "coppercrag",
-    2,
-    "sky_causeways",
-    44,
-    36
-  )
-];
-var INITIAL_SKY_CABLEWAYS = [
-  createCablewaySpec(
-    "cable_timber_frost",
-    "Frostpeak Glacier Gondola",
-    "timbercrown",
-    "frostpeak",
-    "cliff_cableways",
-    34,
-    26,
-    4
-  ),
-  createCablewaySpec(
-    "cable_crag_frost",
-    "High-Iron Alpine Line",
-    "coppercrag",
-    "frostpeak",
-    "cliff_cableways",
-    38,
-    30,
-    6
-  ),
-  createCablewaySpec(
-    "cable_starbloom_timber",
-    "Cedar-Starlight Aerial Line",
-    "starbloom",
-    "timbercrown",
-    "cliff_cableways",
-    30,
-    20,
-    2
-  ),
-  createCablewaySpec(
-    "cable_mist_ember",
-    "Bastion Cliff Zipline",
-    "mistatoll",
-    "embervault",
-    "cliff_cableways",
-    36,
-    28,
-    8
-  )
-];
+function buildSkyBridgesForDefs(defs) {
+  return [
+    createBridgeSpec(
+      "bridge_cradle_sun",
+      "Sun-Terrace Causeway",
+      "cradle",
+      "sunterrace",
+      1,
+      "rope_bridges",
+      26,
+      12,
+      defs
+    ),
+    createBridgeSpec(
+      "bridge_cradle_timber",
+      "Timbercrown Sky-Bridge",
+      "cradle",
+      "timbercrown",
+      1,
+      "rope_bridges",
+      32,
+      16,
+      defs
+    ),
+    createBridgeSpec(
+      "bridge_cradle_starbloom",
+      "Starbloom Pilgrim Span",
+      "cradle",
+      "starbloom",
+      1,
+      "rope_bridges",
+      28,
+      14,
+      defs
+    ),
+    createBridgeSpec(
+      "bridge_timber_crag",
+      "Copper-Crag High Arch",
+      "timbercrown",
+      "coppercrag",
+      2,
+      "sky_causeways",
+      44,
+      36,
+      defs
+    )
+  ];
+}
+function buildSkyCablewaysForDefs(defs) {
+  return [
+    createCablewaySpec(
+      "cable_timber_frost",
+      "Frostpeak Glacier Gondola",
+      "timbercrown",
+      "frostpeak",
+      "cliff_cableways",
+      34,
+      26,
+      4,
+      defs
+    ),
+    createCablewaySpec(
+      "cable_crag_frost",
+      "High-Iron Alpine Line",
+      "coppercrag",
+      "frostpeak",
+      "cliff_cableways",
+      38,
+      30,
+      6,
+      defs
+    ),
+    createCablewaySpec(
+      "cable_starbloom_timber",
+      "Cedar-Starlight Aerial Line",
+      "starbloom",
+      "timbercrown",
+      "cliff_cableways",
+      30,
+      20,
+      2,
+      defs
+    ),
+    createCablewaySpec(
+      "cable_mist_ember",
+      "Bastion Cliff Zipline",
+      "mistatoll",
+      "embervault",
+      "cliff_cableways",
+      36,
+      28,
+      8,
+      defs
+    )
+  ];
+}
+var INITIAL_SKY_BRIDGES = buildSkyBridgesForDefs(ISLAND_DEFS);
+var INITIAL_SKY_CABLEWAYS = buildSkyCablewaysForDefs(ISLAND_DEFS);
+var activeArchipelagoSeed = DEFAULT_WORLD_SEED;
+function applyArchipelagoSeed(seed) {
+  const normalizedSeed = Math.floor(Math.abs(seed)) || DEFAULT_WORLD_SEED;
+  if (normalizedSeed === activeArchipelagoSeed) return;
+  activeArchipelagoSeed = normalizedSeed;
+  const generated = generateSeededArchipelago(normalizedSeed);
+  for (const id of ISLAND_ORDER) {
+    ISLAND_DEFS[id] = generated[id];
+  }
+  const nextBridges = buildSkyBridgesForDefs(ISLAND_DEFS);
+  INITIAL_SKY_BRIDGES.splice(0, INITIAL_SKY_BRIDGES.length, ...nextBridges);
+  const nextCables = buildSkyCablewaysForDefs(ISLAND_DEFS);
+  INITIAL_SKY_CABLEWAYS.splice(0, INITIAL_SKY_CABLEWAYS.length, ...nextCables);
+}
 var TRAVELER_ATTITUDE_META = {
   warm: {
     label: "Warm & Earnest",
@@ -2878,65 +3102,429 @@ function tickGovernance(world, dt) {
 // src/game/lowPolyWorld.ts
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+function wrapAngleDiff2(a, b) {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+function hash2(ix, iy) {
+  const n = Math.sin(ix * 127.1 + iy * 311.7) * 43758.5453123;
+  return n - Math.floor(n);
+}
+function valueNoise2(x, y) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy);
+  const b = hash2(ix + 1, iy);
+  const c = hash2(ix, iy + 1);
+  const d = hash2(ix + 1, iy + 1);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+function fbm2(x, y, octaves = 3) {
+  let sum = 0;
+  let amp = 0.5;
+  let freq = 1;
+  let norm = 0;
+  for (let i = 0; i < octaves; i++) {
+    sum += amp * (valueNoise2(x * freq, y * freq) * 2 - 1);
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.04;
+  }
+  return norm > 0 ? sum / norm : 0;
+}
+function ridgedFbm2(x, y, octaves = 3) {
+  let sum = 0;
+  let amp = 0.5;
+  let freq = 1;
+  let norm = 0;
+  for (let i = 0; i < octaves; i++) {
+    const v = 1 - Math.abs(valueNoise2(x * freq, y * freq) * 2 - 1);
+    sum += amp * v * v;
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.1;
+  }
+  return norm > 0 ? sum / norm : 0;
+}
+function islandNormalizedDist(def, wx, wy) {
+  const dx = (wx - def.centerX) / def.radiusX;
+  const dy = (wy - def.centerY) / def.radiusY;
+  const ang = Math.atan2(dy, dx);
+  const wobble = islandCoastWobble(def, ang);
+  return Math.hypot(dx, dy) / wobble;
+}
+function distToSegmentWithT(px, py, ax, ay, bx, by) {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const wx = px - ax;
+  const wy = py - ay;
+  const len2 = vx * vx + vy * vy;
+  if (len2 < 1e-4) return { dist: Math.hypot(wx, wy), t: 0, len: 0 };
+  const t = Math.max(0, Math.min(1, (wx * vx + wy * vy) / len2));
+  return {
+    dist: Math.hypot(px - (ax + t * vx), py - (ay + t * vy)),
+    t,
+    len: Math.sqrt(len2)
+  };
+}
+function riverDepthAtSim(def, wx, wy) {
+  if (!def.rivers || def.rivers.length === 0) {
+    return { inRiver: false, depth: 0, bankFactor: 0, mouthFactor: 0 };
+  }
+  let maxDepth = 0;
+  let maxBank = 0;
+  let bestMouth = 0;
+  for (const r of def.rivers) {
+    const segCount = Math.max(1, r.points.length - 1);
+    for (let i = 0; i < segCount; i++) {
+      const a = r.points[i];
+      const b = r.points[i + 1];
+      const { dist, t } = distToSegmentWithT(
+        wx,
+        wy,
+        def.centerX + a.dx,
+        def.centerY + a.dy,
+        def.centerX + b.dx,
+        def.centerY + b.dy
+      );
+      const u = (i + t) / segCount;
+      const mouthBoost = smoothstep(0.66, 1, u);
+      const halfW = r.width * (0.48 + mouthBoost * 0.42);
+      const valleyW = halfW * 2.35;
+      if (dist < valleyW) {
+        const valley = (1 - smoothstep(halfW * 0.55, valleyW, dist)) * 0.26;
+        const channel = (1 - smoothstep(halfW * 0.25, halfW * 1.18, dist)) * (0.58 + mouthBoost * 0.16);
+        const totalCarve = Math.max(valley, channel);
+        if (totalCarve > maxDepth) {
+          maxDepth = totalCarve;
+          bestMouth = mouthBoost;
+        }
+        if (valley > maxBank) {
+          maxBank = valley;
+        }
+      }
+    }
+  }
+  return {
+    inRiver: maxDepth > 0.34,
+    depth: maxDepth,
+    bankFactor: maxBank,
+    mouthFactor: bestMouth
+  };
+}
+function pondDepthAtSim(def, wx, wy) {
+  if (!def.ponds || def.ponds.length === 0) return { inPond: false, depth: 0 };
+  let maxDepth = 0;
+  for (const pond of def.ponds) {
+    const px = def.centerX + pond.dx;
+    const py = def.centerY + pond.dy;
+    const norm = Math.hypot((wx - px) / Math.max(12, pond.rx), (wy - py) / Math.max(12, pond.ry));
+    if (norm < 1.55) {
+      const carve = (1 - smoothstep(0.32, 1.55, norm)) * 0.78;
+      if (carve > maxDepth) maxDepth = carve;
+    }
+  }
+  return { inPond: maxDepth > 0.32, depth: maxDepth };
+}
+function getShoreSlopeFactor(def, ang) {
+  let coveWeight = 0;
+  if (def.coveAngles) {
+    for (let i = 0; i < def.coveAngles.length; i++) {
+      const diff = Math.abs(wrapAngleDiff2(ang, def.coveAngles[i]));
+      if (diff < 0.62) {
+        coveWeight = Math.max(coveWeight, Math.exp(-(diff * diff) / 0.085));
+      }
+    }
+  }
+  if (def.dockAngleRad !== void 0) {
+    const dockDiff = Math.abs(wrapAngleDiff2(ang, def.dockAngleRad));
+    if (dockDiff < 0.45) {
+      coveWeight = Math.max(coveWeight, Math.exp(-(dockDiff * dockDiff) / 0.065));
+    }
+  }
+  if (def.terrainStyle === "basin" || def.terrainStyle === "multi_river" || def.terrainStyle === "atoll") {
+    const headlandWave = Math.sin(ang * 3 + (def.coastRotRad ?? 0)) * 0.5 + 0.5;
+    return Math.min(1, Math.max(coveWeight, 0.58 + (1 - headlandWave) * 0.34));
+  }
+  if (def.terrainStyle === "ruins") {
+    return Math.min(1, Math.max(coveWeight, 0.46));
+  }
+  return coveWeight;
+}
+function islandBasePlateauHeightAtSim(def, wx, wy, nd) {
+  const lx = (wx - def.centerX) / def.radiusX;
+  const ly = (wy - def.centerY) / def.radiusY;
+  const ang = Math.atan2(ly, lx);
+  const seedOff = (def.coastSeed ?? 1) % 500 * 0.13;
+  const organicNoise = fbm2(wx * 44e-4 + seedOff, wy * 44e-4 - seedOff * 0.7, 3);
+  const detailRoll = fbm2(wx * 0.011 - seedOff * 0.4, wy * 0.011 + seedOff * 0.9, 2) * 0.16;
+  const clearingFlat = smoothstep(0.15, 0.46, nd);
+  const rAngle = def.ridgeAngle ?? 0;
+  const rCos = Math.cos(rAngle);
+  const rSin = Math.sin(rAngle);
+  const rxCoord = lx * rCos + ly * rSin;
+  const ryCoord = -lx * rSin + ly * rCos;
+  let relief = (organicNoise * 0.42 + detailRoll) * (0.2 + 0.8 * clearingFlat) * (1 - nd * 0.34);
+  if (def.id === "cradle") {
+    const gentleBackHill = smoothstep(0.45, -0.58, ryCoord) * 0.82 * clearingFlat;
+    const sideKnoll = smoothstep(0.48, 0.12, Math.hypot(rxCoord + 0.52, ryCoord + 0.08)) * 0.44;
+    relief += gentleBackHill + sideKnoll;
+  } else if (def.id === "timbercrown") {
+    const gorgeAng = def.waterfallAngle ?? 0.72;
+    const angDiff = Math.abs(wrapAngleDiff2(ang, gorgeAng));
+    const gorgeCut = nd > 0.34 ? smoothstep(0.28, 0.05, angDiff) * 1.38 : 0;
+    const highEscarpment = smoothstep(0.24, -0.56, ryCoord) * 1.45;
+    relief += highEscarpment - gorgeCut + organicNoise * 0.25 * clearingFlat;
+  } else if (def.id === "sunterrace") {
+    const valleySlope = smoothstep(-0.62, 0.58, ryCoord) * 0.65 * clearingFlat;
+    relief += valleySlope + organicNoise * 0.26 * clearingFlat;
+  } else if (def.id === "coppercrag") {
+    const westSpire = smoothstep(0.5, 0.12, Math.hypot(rxCoord + 0.38, ryCoord + 0.18)) * 3.4;
+    const northRidge = smoothstep(0.45, 0.1, Math.hypot(rxCoord - 0.28, ryCoord + 0.32)) * 2.85;
+    const basin = smoothstep(0.38, 0.1, Math.hypot(rxCoord, ryCoord - 0.08)) * -0.92;
+    const cragRidges = ridgedFbm2(wx * 85e-4 + seedOff, wy * 85e-4, 3) * 0.85 * clearingFlat;
+    relief += westSpire + northRidge + basin + cragRidges;
+  } else if (def.id === "mistatoll") {
+    const lOff = def.lagoonOffset ?? { lx: -0.14, ly: 0 };
+    const awayAng = Math.atan2(lOff.ly, lOff.lx) + Math.PI;
+    const crescentFactor = smoothstep(-0.35, 0.75, Math.cos(ang - awayAng));
+    const horseshoe = smoothstep(0.34, 0.72, nd) * crescentFactor * 1.65;
+    const lagoonDip = smoothstep(0.42, 0.14, Math.hypot(lx - lOff.lx, ly - lOff.ly)) * 1.05;
+    relief += horseshoe - lagoonDip;
+  } else if (def.id === "starbloom") {
+    const centerArena = smoothstep(0.32, 0.08, nd) * -0.28;
+    const highKnoll = smoothstep(0.45, 0.12, Math.hypot(rxCoord - 0.32, ryCoord + 0.36)) * 1.15;
+    relief += centerArena + highKnoll;
+  } else if (def.id === "embervault") {
+    const tOff = def.trenchOffset ?? { lx: -0.34, ly: 0.22 };
+    const coneRim = Math.exp(-Math.pow((nd - 0.42) / 0.22, 2)) * 3.25;
+    const citadelPlate = smoothstep(0.32, 0.14, Math.hypot(rxCoord - 0.05, ryCoord + 0.08)) * 1.28;
+    const lavaTrench = smoothstep(0.24, 0.06, Math.hypot(lx - tOff.lx, ly - tOff.ly)) * -4.9;
+    const basaltRidges = ridgedFbm2(wx * 9e-3 + seedOff, wy * 9e-3, 3) * 0.84 * clearingFlat;
+    relief += coneRim + citadelPlate + lavaTrench + basaltRidges;
+  } else if (def.id === "frostpeak") {
+    const summitPeak = smoothstep(0.58, 0.06, Math.hypot(rxCoord + 0.2, ryCoord + 0.2)) * 5.5;
+    const eastPeak = smoothstep(0.48, 0.1, Math.hypot(rxCoord - 0.34, ryCoord - 0.08)) * 3.7;
+    const southSpur = smoothstep(0.42, 0.12, Math.hypot(rxCoord + 0.1, ryCoord - 0.35)) * 2.05;
+    const glacierShelf = smoothstep(0.18, -0.05, ryCoord) * 1.05;
+    const alpineCrests = ridgedFbm2(wx * 75e-4 + seedOff, wy * 75e-4, 3) * 0.92 * clearingFlat;
+    relief += summitPeak + eastPeak + southSpur + glacierShelf + alpineCrests;
+  }
+  let h = def.elevationY + relief;
+  const shoreSlope = getShoreSlopeFactor(def, ang);
+  if (shoreSlope > 0.05) {
+    const beachStart = 0.72;
+    const beachT = smoothstep(beachStart, 1.03, nd);
+    if (beachT > 0) {
+      const targetShoreY = -0.38;
+      h = h * (1 - beachT * shoreSlope) + targetShoreY * (beachT * shoreSlope);
+    }
+  }
+  if (shoreSlope <= 0.05 && nd > 0.93) {
+    const rimT = smoothstep(0.93, 1.03, nd);
+    h -= rimT * 0.85;
+  }
+  return h;
+}
+function islandTerrainHeightAtSim(def, wx, wy, nd) {
+  let h = islandBasePlateauHeightAtSim(def, wx, wy, nd);
+  const riverSample = riverDepthAtSim(def, wx, wy);
+  if (riverSample.depth > 0) {
+    h -= riverSample.depth;
+    const isWaterfallDrop = def.hasWaterfall && def.waterfallAngle !== void 0 && Math.abs(wrapAngleDiff2(Math.atan2((wy - def.centerY) / def.radiusY, (wx - def.centerX) / def.radiusX), def.waterfallAngle)) < 0.28;
+    if (!isWaterfallDrop && riverSample.mouthFactor > 0.25 && riverSample.inRiver) {
+      const estuaryDip = riverSample.mouthFactor * 0.55;
+      h = Math.min(h, Math.max(-0.42, h - estuaryDip));
+    }
+  }
+  const pondSample = pondDepthAtSim(def, wx, wy);
+  if (pondSample.depth > 0) {
+    h -= pondSample.depth;
+  }
+  if (def.hasSpring && def.springOffset) {
+    const sx = def.centerX + def.springOffset.dx;
+    const sy = def.centerY + def.springOffset.dy;
+    const sd = Math.hypot(wx - sx, wy - sy);
+    if (sd < 44) {
+      h -= (1 - smoothstep(14, 44, sd)) * 0.44;
+    }
+  }
+  const centerProtect = 1 - smoothstep(0.14, 0.24, nd);
+  if (centerProtect > 0.05) {
+    h = Math.max(h, Math.max(0.45, def.elevationY * 0.72) * centerProtect);
+  }
+  const dockDist = Math.hypot(wx - def.dockSpot.x, wy - def.dockSpot.y);
+  if (dockDist < 42) {
+    const dockT = 1 - smoothstep(18, 42, dockDist);
+    h = Math.max(h, 0.36 * dockT);
+  }
+  return Math.max(-0.48, h);
+}
+function terrainSlopeAtSim(wx, wy) {
+  const eps = 16;
+  const h = groundHeightAtSim(wx, wy);
+  const hx = groundHeightAtSim(wx + eps, wy);
+  const hz = groundHeightAtSim(wx, wy + eps);
+  return Math.hypot((hx - h) / (eps * WORLD_SCALE), (hz - h) / (eps * WORLD_SCALE));
+}
+function groundHeightAtSim(wx, wy, bridges) {
+  if (bridges) {
+    for (const br of bridges) {
+      if (!br.built) continue;
+      const vx = br.x2 - br.x1;
+      const vy = br.y2 - br.y1;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 1) continue;
+      const t = ((wx - br.x1) * vx + (wy - br.y1) * vy) / len2;
+      if (t >= -0.05 && t <= 1.05) {
+        const ct = Math.max(0, Math.min(1, t));
+        const px = br.x1 + ct * vx;
+        const py = br.y1 + ct * vy;
+        if (Math.hypot(wx - px, wy - py) <= 22) {
+          const yA = groundHeightAtSim(br.x1, br.y1);
+          const yB = groundHeightAtSim(br.x2, br.y2);
+          const arch = Math.sin(ct * Math.PI) * (br.tier === 2 ? 1.85 : 0.95);
+          return yA + (yB - yA) * ct + arch + 0.14;
+        }
+      }
+    }
+  }
+  for (const id of ISLAND_ORDER) {
+    const def = ISLAND_DEFS[id];
+    const nd = islandNormalizedDist(def, wx, wy);
+    if (nd <= 1.03) {
+      return islandTerrainHeightAtSim(def, wx, wy, nd);
+    }
+  }
+  return 0;
+}
+function resolveValidLandmarkSpot(def, tx, ty, allowWetRim = false) {
+  const isOk = (wx, wy) => {
+    const nd = islandNormalizedDist(def, wx, wy);
+    if (nd > 0.9) return false;
+    const h = islandTerrainHeightAtSim(def, wx, wy, nd);
+    if (h < (allowWetRim ? 0.06 : 0.28)) return false;
+    if (def.biome === "volcanic" && h < def.elevationY - 0.35) return false;
+    if (def.hasSpring && def.springOffset) {
+      const sd = Math.hypot(wx - (def.centerX + def.springOffset.dx), wy - (def.centerY + def.springOffset.dy));
+      if (sd < (allowWetRim ? 22 : 42)) return false;
+    }
+    if (pondDepthAtSim(def, wx, wy).inPond) return false;
+    const riv = riverDepthAtSim(def, wx, wy);
+    if (riv.inRiver || !allowWetRim && riv.depth > 0.16) return false;
+    if (terrainSlopeAtSim(wx, wy) > 0.44) return false;
+    return true;
+  };
+  if (isOk(tx, ty)) return { x: tx, y: ty };
+  const baseAng = Math.atan2(ty - def.centerY, tx - def.centerX);
+  const baseR = Math.hypot((tx - def.centerX) / def.radiusX, (ty - def.centerY) / def.radiusY);
+  for (let step = 1; step <= 18; step++) {
+    const sign = step % 2 === 0 ? 1 : -1;
+    const ang = baseAng + sign * Math.ceil(step / 2) * 0.24;
+    const rad = Math.min(0.84, Math.max(0.28, baseR * 0.94));
+    const wobble = islandCoastWobble(def, ang);
+    const cx = Math.round(def.centerX + Math.cos(ang) * def.radiusX * rad * wobble);
+    const cy = Math.round(def.centerY + Math.sin(ang) * def.radiusY * rad * wobble);
+    if (isOk(cx, cy)) return { x: cx, y: cy };
+  }
+  return { x: tx, y: ty };
+}
 function buildArchipelagoLandmarks() {
   const list = [];
   let idx = 0;
   const add = (islandId, kind, x, y, scale = 1, rotY = 0) => {
+    if (islandId !== "sea") {
+      const def = ISLAND_DEFS[islandId];
+      const pos = resolveValidLandmarkSpot(def, x, y, kind === "reed_clump" || kind === "driftwood");
+      list.push({ id: `lm_${idx++}`, islandId, kind, x: pos.x, y: pos.y, scale, rotY });
+      return;
+    }
     list.push({ id: `lm_${idx++}`, islandId, kind, x, y, scale, rotY });
   };
-  const cr = ISLAND_DEFS.cradle;
-  add("cradle", "cliff_boulder", cr.centerX - 420, cr.centerY - 310, 1.35, 0.4);
-  add("cradle", "cliff_boulder", cr.centerX + 380, cr.centerY - 330, 1.2, 1.2);
-  add("cradle", "monolith", cr.centerX - 310, cr.centerY - 220, 1.15, 0.25);
-  add("cradle", "reed_clump", cr.centerX + cr.springOffset.dx + 38, cr.centerY + cr.springOffset.dy + 16, 1, 0.7);
-  add("cradle", "driftwood", cr.centerX + 590, cr.centerY + 190, 1, 2.1);
-  const tc = ISLAND_DEFS.timbercrown;
-  add("timbercrown", "cliff_boulder", tc.centerX - 340, tc.centerY - 260, 1.5, 0.8);
-  add("timbercrown", "cliff_boulder", tc.centerX + 360, tc.centerY - 220, 1.3, 1.8);
-  add("timbercrown", "monolith", tc.centerX - 60, tc.centerY - 280, 1.25, 0.5);
-  add("timbercrown", "reed_clump", tc.centerX + tc.springOffset.dx - 32, tc.centerY + tc.springOffset.dy + 20, 1, 1.4);
-  const st = ISLAND_DEFS.sunterrace;
-  add("sunterrace", "ruin_cairn", st.centerX - 180, st.centerY - 120, 1.2, 0.3);
-  add("sunterrace", "ruin_cairn", st.centerX + 210, st.centerY + 95, 1.05, 1.4);
-  add("sunterrace", "cliff_boulder", st.centerX + 490, st.centerY - 290, 1.3, 0.9);
-  add("sunterrace", "reed_clump", st.centerX + st.springOffset.dx + 36, st.centerY + st.springOffset.dy - 12, 1, 2.2);
-  const cc = ISLAND_DEFS.coppercrag;
-  add("coppercrag", "cliff_boulder", cc.centerX - 390, cc.centerY - 160, 1.65, 1.1);
-  add("coppercrag", "cliff_boulder", cc.centerX + 340, cc.centerY - 210, 1.5, 2.4);
-  add("coppercrag", "monolith", cc.centerX - 240, cc.centerY + 210, 1.35, 0.15);
-  const ma = ISLAND_DEFS.mistatoll;
-  add("mistatoll", "driftwood", ma.centerX - 320, ma.centerY + 210, 1.1, 0.8);
-  add("mistatoll", "reed_clump", ma.centerX - 95, ma.centerY + 115, 1.15, 0.3);
-  add("mistatoll", "reed_clump", ma.centerX + 185, ma.centerY - 60, 1.05, 1.7);
-  add("mistatoll", "cliff_boulder", ma.centerX + 420, ma.centerY + 120, 1.4, 2);
-  const sb = ISLAND_DEFS.starbloom;
-  add("starbloom", "ruin_cairn", sb.centerX - 240, sb.centerY - 170, 1.3, 0.4);
-  add("starbloom", "ruin_cairn", sb.centerX + 240, sb.centerY + 180, 1.2, 1.7);
-  add("starbloom", "crystal_spire", sb.centerX + 310, sb.centerY - 220, 1.25, 0.8);
-  add("starbloom", "reed_clump", sb.centerX + sb.springOffset.dx + 32, sb.centerY + sb.springOffset.dy + 16, 1.05, 1.1);
-  const ev = ISLAND_DEFS.embervault;
-  add("embervault", "cliff_boulder", ev.centerX - 370, ev.centerY - 180, 1.7, 0.6);
-  add("embervault", "cliff_boulder", ev.centerX + 360, ev.centerY + 190, 1.6, 2.2);
-  add("embervault", "monolith", ev.centerX - 250, ev.centerY + 240, 1.4, 1);
-  const fp = ISLAND_DEFS.frostpeak;
-  add("frostpeak", "crystal_spire", fp.centerX - 210, fp.centerY - 190, 1.4, 0.5);
-  add("frostpeak", "cliff_boulder", fp.centerX + 310, fp.centerY + 120, 1.55, 1.5);
-  add("frostpeak", "monolith", fp.centerX - 330, fp.centerY + 180, 1.2, 0.9);
-  const seaIslets = [
-    [1400, 2900, 1.15],
-    [2200, 1980, 1],
-    [3640, 2320, 1.2],
-    [5180, 2060, 1.08],
-    [3250, 1180, 1.25],
-    [5150, 1120, 1.18],
-    [2120, 3680, 1.25],
-    [5560, 3440, 1.05],
-    [1020, 960, 1.22],
-    [6820, 1860, 1.12]
-  ];
-  seaIslets.forEach(([sx, sy, sc], i) => {
-    add("sea", "sky_islet", sx, sy, sc, i * 1.1 % (Math.PI * 2));
-  });
+  for (const id of ISLAND_ORDER) {
+    const def = ISLAND_DEFS[id];
+    const rng = mulberry32((def.coastSeed ?? 1) + 77);
+    if (def.hasSpring && def.springOffset) {
+      const rAng = rng() * Math.PI * 2;
+      add(
+        id,
+        "reed_clump",
+        Math.round(def.centerX + def.springOffset.dx + Math.cos(rAng) * 34),
+        Math.round(def.centerY + def.springOffset.dy + Math.sin(rAng) * 28),
+        1.02,
+        rng() * Math.PI * 2
+      );
+    }
+    if (def.ponds && def.ponds.length > 0) {
+      for (const pond of def.ponds) {
+        for (let p = 0; p < 2; p++) {
+          const pAng = rng() * Math.PI * 2;
+          add(
+            id,
+            "reed_clump",
+            Math.round(def.centerX + pond.dx + Math.cos(pAng) * (pond.rx + 12)),
+            Math.round(def.centerY + pond.dy + Math.sin(pAng) * (pond.ry + 12)),
+            0.95 + rng() * 0.25,
+            rng() * Math.PI * 2
+          );
+        }
+      }
+    }
+    if (def.coveAngles && def.coveAngles.length > 0 && def.biome !== "volcanic") {
+      const coveAng = def.coveAngles[Math.floor(rng() * def.coveAngles.length)] + (rng() - 0.5) * 0.22;
+      const rimWob = islandCoastWobble(def, coveAng);
+      add(
+        id,
+        "driftwood",
+        Math.round(def.centerX + Math.cos(coveAng) * def.radiusX * rimWob * 0.86),
+        Math.round(def.centerY + Math.sin(coveAng) * def.radiusY * rimWob * 0.86),
+        0.95 + rng() * 0.2,
+        coveAng + Math.PI * 0.5
+      );
+    }
+    if (def.biome === "meadow" || def.biome === "pine" || def.biome === "terrace" || def.biome === "ruins") {
+      const stumpCount = def.biome === "meadow" ? 3 : 2;
+      for (let s = 0; s < stumpCount; s++) {
+        const sAng = s / stumpCount * Math.PI * 2 + rng() * 1.4;
+        const sRad = 0.42 + rng() * 0.22;
+        const wob = islandCoastWobble(def, sAng);
+        add(
+          id,
+          "stump",
+          Math.round(def.centerX + Math.cos(sAng) * def.radiusX * sRad * wob),
+          Math.round(def.centerY + Math.sin(sAng) * def.radiusY * sRad * wob),
+          0.95 + rng() * 0.18,
+          rng() * Math.PI * 2
+        );
+      }
+    }
+    if (id === "starbloom") {
+      const ang = rng() * Math.PI * 2;
+      add(id, "ruin_cairn", Math.round(def.centerX + Math.cos(ang) * 230), Math.round(def.centerY + Math.sin(ang) * 180), 1.15, rng() * Math.PI);
+      add(id, "crystal_spire", Math.round(def.centerX - Math.cos(ang) * 240), Math.round(def.centerY - Math.sin(ang) * 185), 1.2, rng() * Math.PI);
+    } else if (id === "frostpeak") {
+      const ang = rng() * Math.PI * 2;
+      add(id, "crystal_spire", Math.round(def.centerX + Math.cos(ang) * 210), Math.round(def.centerY + Math.sin(ang) * 170), 1.35, rng() * Math.PI);
+    }
+  }
+  const seaRng = mulberry32((ISLAND_DEFS.cradle.coastSeed ?? 104729) + 991);
+  let seaAttempts = 0;
+  let seaPlaced = 0;
+  while (seaPlaced < 10 && seaAttempts < 180) {
+    seaAttempts++;
+    const sx = Math.round(360 + seaRng() * (WORLD_WIDTH - 720));
+    const sy = Math.round(320 + seaRng() * (WORLD_HEIGHT - 640));
+    if (getIslandAtPoint(sx, sy, -220) !== null) continue;
+    add("sea", "sky_islet", sx, sy, 1 + seaRng() * 0.3, seaRng() * Math.PI * 2);
+    seaPlaced++;
+  }
   return list;
 }
 
@@ -3137,7 +3725,8 @@ function canBuildCottage(world, islandId) {
 // src/game/navigation.ts
 var NAV_CELL_SIZE = 24;
 var worldGridCache = /* @__PURE__ */ new WeakMap();
-function smoothstep(edge0, edge1, x) {
+var stuckGridSigCache = /* @__PURE__ */ new WeakMap();
+function smoothstep2(edge0, edge1, x) {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 }
@@ -3203,10 +3792,11 @@ function findCablewayStepNav(world, from, to) {
 function sampleRiverTerrain(def, wx, wy) {
   if (!def.rivers || def.rivers.length === 0) return null;
   let maxDepth = 0;
+  let bestMouth = 0;
   let atShallowFord = false;
   for (const r of def.rivers) {
-    const halfW = r.width * 0.55;
-    for (let i = 0; i < r.points.length - 1; i++) {
+    const segCount = Math.max(1, r.points.length - 1);
+    for (let i = 0; i < segCount; i++) {
       const a = r.points[i];
       const b = r.points[i + 1];
       const { dist, t, len } = segmentProjT(
@@ -3217,18 +3807,22 @@ function sampleRiverTerrain(def, wx, wy) {
         def.centerX + b.dx,
         def.centerY + b.dy
       );
-      if (dist < halfW * 1.45) {
-        const carve = (1 - smoothstep(halfW * 0.35, halfW * 1.45, dist)) * 0.68;
+      const u = (i + t) / segCount;
+      const mouthBoost = smoothstep2(0.66, 1, u);
+      const halfW = r.width * (0.48 + mouthBoost * 0.42);
+      if (dist < halfW * 1.38) {
+        const carve = (1 - smoothstep2(halfW * 0.32, halfW * 1.38, dist)) * (0.58 + mouthBoost * 0.16);
         if (carve > maxDepth) {
           maxDepth = carve;
-          const nearFord = len > 150 && (Math.abs(t - 0.32) < 0.11 || Math.abs(t - 0.72) < 0.11) || len <= 150 && Math.abs(t - 0.5) < 0.18;
+          bestMouth = mouthBoost;
+          const nearFord = len > 120 && (Math.abs(t - 0.32) < 0.14 || Math.abs(t - 0.72) < 0.14) || len <= 120 && Math.abs(t - 0.5) < 0.22 || u < 0.18;
           atShallowFord = nearFord;
         }
       }
     }
   }
   if (maxDepth <= 0.18) return null;
-  if (def.biome === "terrace" && maxDepth >= 0.54 && !atShallowFord) {
+  if (!atShallowFord && (def.biome === "terrace" && maxDepth >= 0.54 || bestMouth > 0.78 && maxDepth >= 0.48)) {
     return "deep_water";
   }
   return "shallow_water";
@@ -3237,33 +3831,7 @@ function classifyMainWorldTerrain(world, wx, wy) {
   if (isOnBuiltBridgeNav(world, wx, wy)) return "bridge";
   const def = getIslandAtPoint(wx, wy, 10);
   if (!def) return "deep_water";
-  const nd = islandNormalizedDistNav(def, wx, wy);
-  if (nd >= 0.94) return "deep_water";
-  if (def.hasSpring && def.springOffset) {
-    const sx = def.centerX + def.springOffset.dx;
-    const sy = def.centerY + def.springOffset.dy;
-    const sd = Math.hypot(wx - sx, wy - sy);
-    if (sd < 18) return "deep_water";
-    if (sd < 34) return "shallow_water";
-  }
-  const riverKind = sampleRiverTerrain(def, wx, wy);
-  if (riverKind) return riverKind;
-  if (def.biome === "mist_atoll") {
-    const lx = (wx - def.centerX) / def.radiusX;
-    const ly = (wy - def.centerY) / def.radiusY;
-    const lagoonDip = smoothstep(0.44, 0.14, Math.hypot(lx + 0.14, ly)) * 0.62;
-    const gentle = Math.sin(wx * 0.014 + wy * 0.011) * 0.28 + Math.cos(wx * 9e-3 - wy * 0.015) * 0.22;
-    const approxH = def.elevationY + gentle * (1 - nd * 0.52) - lagoonDip;
-    if (approxH < 0.34) return "deep_water";
-    if (approxH < 0.54) return "shallow_water";
-  }
-  if (def.biome === "volcanic") {
-    const lx = (wx - def.centerX) / def.radiusX;
-    const ly = (wy - def.centerY) / def.radiusY;
-    const trench = smoothstep(0.24, 0.06, Math.hypot(lx + 0.34, ly - 0.22)) * 1.55;
-    if (trench > 0.72) return "deep_water";
-  }
-  return "land";
+  return classifyIslandOnlyTerrain(def, wx, wy);
 }
 function getTerrainSpeedMultiplier(kind) {
   if (kind === "shallow_water") return 0.55;
@@ -3398,7 +3966,7 @@ function getOrBuildIslandNavGrid(world, islandId, landmarks) {
 }
 function classifyIslandOnlyTerrain(def, wx, wy) {
   const nd = islandNormalizedDistNav(def, wx, wy);
-  if (nd >= 0.94) return "deep_water";
+  if (nd >= 0.96) return "deep_water";
   if (def.hasSpring && def.springOffset) {
     const sx = def.centerX + def.springOffset.dx;
     const sy = def.centerY + def.springOffset.dy;
@@ -3406,23 +3974,35 @@ function classifyIslandOnlyTerrain(def, wx, wy) {
     if (sd < 18) return "deep_water";
     if (sd < 34) return "shallow_water";
   }
+  const pond = pondDepthAtSim(def, wx, wy);
+  if (pond.depth >= 0.42) return "deep_water";
+  if (pond.depth > 0.16) return "shallow_water";
   const riverKind = sampleRiverTerrain(def, wx, wy);
   if (riverKind) return riverKind;
   if (def.biome === "mist_atoll") {
     const lx = (wx - def.centerX) / def.radiusX;
     const ly = (wy - def.centerY) / def.radiusY;
-    const lagoonDip = smoothstep(0.44, 0.14, Math.hypot(lx + 0.14, ly)) * 0.62;
-    const gentle = Math.sin(wx * 0.014 + wy * 0.011) * 0.28 + Math.cos(wx * 9e-3 - wy * 0.015) * 0.22;
-    const approxH = def.elevationY + gentle * (1 - nd * 0.52) - lagoonDip;
-    if (approxH < 0.34) return "deep_water";
-    if (approxH < 0.54) return "shallow_water";
+    const lOff = def.lagoonOffset ?? { lx: -0.14, ly: 0 };
+    const lDist = Math.hypot(lx - lOff.lx, ly - lOff.ly);
+    if (lDist < 0.16) return "deep_water";
+    if (lDist < 0.25) return "shallow_water";
   }
   if (def.biome === "volcanic") {
     const lx = (wx - def.centerX) / def.radiusX;
     const ly = (wy - def.centerY) / def.radiusY;
-    const trench = smoothstep(0.24, 0.06, Math.hypot(lx + 0.34, ly - 0.22)) * 1.55;
+    const tOff = def.trenchOffset ?? { lx: -0.34, ly: 0.22 };
+    const trench = smoothstep2(0.24, 0.06, Math.hypot(lx - tOff.lx, ly - tOff.ly)) * 1.55;
     if (trench > 0.72) return "deep_water";
   }
+  if (Math.hypot(wx - def.dockSpot.x, wy - def.dockSpot.y) <= 28) {
+    return "land";
+  }
+  if (nd <= 0.15) {
+    return "land";
+  }
+  const h = islandTerrainHeightAtSim(def, wx, wy, nd);
+  if (h <= 0.02) return "deep_water";
+  if (h <= 0.18) return "shallow_water";
   return "land";
 }
 function cellCenter(grid, col, row) {
@@ -3466,15 +4046,26 @@ function findNearestWalkableCell(grid, startCol, startRow, maxRadius, preferLand
   return bestShallow !== void 0 ? { col: bestShallow.col, row: bestShallow.row } : null;
 }
 function hasGridLineOfSight(grid, ax, ay, bx, by) {
-  const dist = Math.hypot(bx - ax, by - ay);
-  const steps = Math.max(1, Math.ceil(dist / (grid.cellSize * 0.45)));
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return true;
+  const nx = -dy / dist;
+  const ny = dx / dist;
+  const margin = 5.5;
+  const steps = Math.max(2, Math.ceil(dist / (grid.cellSize * 0.34)));
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
-    const px = ax + (bx - ax) * t;
-    const py = ay + (by - ay) * t;
+    const px = ax + dx * t;
+    const py = ay + dy * t;
     const col = Math.floor((px - grid.minX) / grid.cellSize);
     const row = Math.floor((py - grid.minY) / grid.cellSize);
     if (!isCellWalkable(grid, col, row)) return false;
+    for (const side of [-margin, margin]) {
+      const sc = Math.floor((px + nx * side - grid.minX) / grid.cellSize);
+      const sr = Math.floor((py + ny * side - grid.minY) / grid.cellSize);
+      if (!isCellWalkable(grid, sc, sr)) return false;
+    }
   }
   return true;
 }
@@ -3635,7 +4226,11 @@ function findIslandPath(world, islandId, startX, startY, goalX, goalY, landmarks
       const nIdx = nr * grid.cols + nc;
       if (closed[nIdx]) continue;
       const terrainPenalty = grid.terrain[nIdx] === "shallow_water" ? 1.85 : 1;
-      const tentativeG = gScore[curr] + stepCost * terrainPenalty;
+      let clearancePenalty = 0;
+      if (!isCellWalkable(grid, nc + 1, nr) || !isCellWalkable(grid, nc - 1, nr) || !isCellWalkable(grid, nc, nr + 1) || !isCellWalkable(grid, nc, nr - 1)) {
+        clearancePenalty = 0.32;
+      }
+      const tentativeG = gScore[curr] + stepCost * terrainPenalty + clearancePenalty;
       if (tentativeG < gScore[nIdx]) {
         cameFrom[nIdx] = curr;
         gScore[nIdx] = tentativeG;
@@ -3812,13 +4407,18 @@ function steerMainWorldEntity(world, islandId, x, y, tx, ty, baseStepDist, ignor
   const onBridgeAlready = Boolean(isOnBuiltBridgeNav(world, x, y));
   let activeWaypointX = navX;
   let activeWaypointY = navY;
+  let activeGrid = null;
   if (!onBridgeAlready && stuckState) {
+    activeGrid = getOrBuildIslandNavGrid(world, islandId, landmarks);
+    const prevSig = stuckGridSigCache.get(stuckState);
+    const obstacleSigChanged = prevSig !== void 0 && prevSig !== activeGrid.signature;
     const goalChanged = stuckState.cachedGoalX === void 0 || stuckState.cachedGoalY === void 0 || stuckState.cachedIslandId !== islandId || Math.hypot(navX - stuckState.cachedGoalX, navY - stuckState.cachedGoalY) > 22;
-    if (goalChanged || !stuckState.waypoints || stuckState.waypoints.length === 0) {
+    if (goalChanged || obstacleSigChanged || !stuckState.waypoints || stuckState.waypoints.length === 0) {
       const plan = findIslandPath(world, islandId, x, y, navX, navY, landmarks);
       stuckState.cachedGoalX = navX;
       stuckState.cachedGoalY = navY;
       stuckState.cachedIslandId = islandId;
+      stuckGridSigCache.set(stuckState, activeGrid.signature);
       if (!plan.reachable) {
         navBlockedReason = plan.reason;
         stuckState.navBlockedReason = plan.reason;
@@ -3848,7 +4448,7 @@ function steerMainWorldEntity(world, islandId, x, y, tx, ty, baseStepDist, ignor
   }
   let dx = activeWaypointX - x;
   let dy = activeWaypointY - y;
-  const d = Math.hypot(dx, dy);
+  let d = Math.hypot(dx, dy);
   if (d < 0.01) {
     return {
       x,
@@ -3865,20 +4465,36 @@ function steerMainWorldEntity(world, islandId, x, y, tx, ty, baseStepDist, ignor
   let wasStuckReset = false;
   if (stuckState) {
     const goalDist = Math.hypot(navX - x, navY - y);
-    if (goalDist > 14) {
+    if (goalDist > 18) {
       stuckState.timer += dt;
-      if (stuckState.timer >= 0.85) {
+      if (stuckState.timer >= 0.65) {
         const moved = Math.hypot(x - stuckState.lastX, y - stuckState.lastY);
-        if (moved < 3.5) {
+        if (moved < 4.5) {
           stuckState.detourSign = stuckState.detourSign === 1 ? -1 : 1;
           stuckState.recoveryCount = (stuckState.recoveryCount ?? 0) + 1;
           stuckState.waypoints = void 0;
           stuckState.timer = 0;
           stuckState.lastX = x;
           stuckState.lastY = y;
-          const ang = Math.atan2(dy, dx) + stuckState.detourSign * 1.15;
-          dx = Math.cos(ang) * d;
-          dy = Math.sin(ang) * d;
+          if ((stuckState.recoveryCount ?? 0) === 2 && activeGrid) {
+            const curCol = Math.floor((x - activeGrid.minX) / activeGrid.cellSize);
+            const curRow = Math.floor((y - activeGrid.minY) / activeGrid.cellSize);
+            const escapeCell = findNearestWalkableCell(activeGrid, curCol, curRow, 4, true);
+            if (escapeCell) {
+              const esc = cellCenter(activeGrid, escapeCell.col, escapeCell.row);
+              const edx = esc.x - x;
+              const edy = esc.y - y;
+              if (Math.hypot(edx, edy) > 2) {
+                dx = edx;
+                dy = edy;
+                d = Math.hypot(dx, dy);
+              }
+            }
+          } else {
+            const ang = Math.atan2(dy, dx) + stuckState.detourSign * 1.18;
+            dx = Math.cos(ang) * d;
+            dy = Math.sin(ang) * d;
+          }
           if ((stuckState.recoveryCount ?? 0) >= 3) {
             stuckState.recoveryCount = 0;
             wasStuckReset = true;
@@ -5355,7 +5971,7 @@ function upsertLineage(world, v, deathCause) {
 function findBridgeStep(world, from, to) {
   return findBridgeStepNav(world, from, to);
 }
-function islandNormalizedDist(island, wx, wy) {
+function islandNormalizedDist2(island, wx, wy) {
   const dx = (wx - island.centerX) / Math.max(20, island.radiusX);
   const dy = (wy - island.centerY) / Math.max(20, island.radiusY);
   const ang = Math.atan2(dy, dx);
@@ -5488,156 +6104,184 @@ function getHousingBedsForIsland(world, islandId) {
   );
   return Math.max(2, beds);
 }
-function buildInitialWildNodes() {
+function resolveLandPoint(islandId, tx, ty, minCenterDist = 0) {
+  const isl = ISLAND_DEFS[islandId];
+  const isOk = (wx, wy) => {
+    const nd = islandNormalizedDist2(isl, wx, wy);
+    if (nd > 0.85) return false;
+    if (Math.hypot(wx - isl.centerX, wy - isl.centerY) < minCenterDist) return false;
+    if (classifyMainWorldTerrain({ bridges: [] }, wx, wy) !== "land") return false;
+    if (riverDepthAtSim(isl, wx, wy).depth > 0.14) return false;
+    if (pondDepthAtSim(isl, wx, wy).inPond) return false;
+    if (terrainSlopeAtSim(wx, wy) > 0.45) return false;
+    return true;
+  };
+  if (isOk(tx, ty)) return { x: Math.round(tx), y: Math.round(ty) };
+  const baseAng = Math.atan2(ty - isl.centerY, tx - isl.centerX);
+  const baseFrac = Math.min(
+    0.72,
+    Math.max(0.12, Math.hypot((tx - isl.centerX) / isl.radiusX, (ty - isl.centerY) / isl.radiusY))
+  );
+  for (let ring = 0; ring < 5; ring++) {
+    const frac = Math.min(0.8, Math.max(0.08, baseFrac + (ring % 2 === 0 ? -0.1 : 0.1) * Math.ceil(ring / 2)));
+    for (let step = 0; step < 20; step++) {
+      const ang = baseAng + (step % 2 === 0 ? 1 : -1) * Math.ceil(step / 2) * 0.28;
+      const wobble = islandCoastWobble(isl, ang);
+      const cx = isl.centerX + Math.cos(ang) * isl.radiusX * frac * wobble;
+      const cy = isl.centerY + Math.sin(ang) * isl.radiusY * frac * wobble;
+      if (isOk(cx, cy)) return { x: Math.round(cx), y: Math.round(cy) };
+    }
+  }
+  return { x: Math.round(isl.centerX), y: Math.round(isl.centerY) };
+}
+function buildInitialWildNodes(worldSeed) {
   const nodes = [];
   let idx = 0;
-  const addNode = (islandId, kind, dx, dy, amount, variant, scale = 1) => {
+  const rng = mulberry32((Math.floor(Math.abs(worldSeed)) || DEFAULT_WORLD_SEED) ^ 2654435769);
+  const isValidNodeSpot = (islandId, kind, wx, wy) => {
     const isl = ISLAND_DEFS[islandId];
-    const x = isl.centerX + dx;
-    const y = isl.centerY + dy;
-    nodes.push({
-      id: `node_${idx++}`,
-      islandId,
-      kind,
-      x,
-      y,
-      amount,
-      maxAmount: amount,
-      variant,
-      scale
-    });
+    const nd = islandNormalizedDist2(isl, wx, wy);
+    if (nd > (kind === "tree" ? 0.87 : 0.81)) return false;
+    if (classifyMainWorldTerrain({ bridges: [] }, wx, wy) !== "land") return false;
+    if (riverDepthAtSim(isl, wx, wy).depth > 0.12) return false;
+    if (pondDepthAtSim(isl, wx, wy).depth > 0.12) return false;
+    if (terrainSlopeAtSim(wx, wy) > 0.43) return false;
+    const minCenterDist = kind === "tree" || kind === "stone_boulder" ? 92 : 72;
+    if (Math.hypot(wx - isl.centerX, wy - isl.centerY) < minCenterDist) return false;
+    if (isl.hasSpring && isl.springOffset) {
+      const sx = isl.centerX + isl.springOffset.dx;
+      const sy = isl.centerY + isl.springOffset.dy;
+      if (Math.hypot(wx - sx, wy - sy) < 64) return false;
+    }
+    if (Math.hypot(wx - isl.dockSpot.x, wy - isl.dockSpot.y) < 88) return false;
+    const minNodeSep = kind === "tree" || kind === "stone_boulder" ? 42 : 30;
+    for (let i = 0; i < nodes.length; i++) {
+      const other = nodes[i];
+      if (other.islandId !== islandId) continue;
+      const req = other.kind === "tree" || other.kind === "stone_boulder" ? Math.max(minNodeSep, 40) : minNodeSep;
+      if (Math.hypot(wx - other.x, wy - other.y) < req) return false;
+    }
+    return true;
   };
-  addNode("cradle", "berry_bush", -160, 88, 18);
-  addNode("cradle", "berry_bush", 135, -135, 18);
-  addNode("cradle", "berry_bush", 195, 125, 16);
-  addNode("cradle", "branch_pile", -235, 118, 22);
-  addNode("cradle", "branch_pile", 105, 195, 22);
-  addNode("cradle", "flint_pile", -100, -195, 18);
-  addNode("cradle", "stone_boulder", 190, -55, 34, void 0, 1.15);
-  addNode("cradle", "stone_boulder", -215, -105, 32, void 0, 1.05);
-  for (const [dx, dy, v, s] of [
-    [-340, -140, "pine", 2.05],
-    [-315, 160, "oak", 1.92],
-    [-185, 250, "pine", 1.85],
-    [300, -205, "oak", 2],
-    [335, 165, "pine", 1.9],
-    [-30, -265, "oak", 1.88],
-    [-415, 25, "pine", 2.15],
-    [380, -45, "oak", 1.8],
-    [-110, -305, "pine", 1.95],
-    [235, 245, "oak", 1.85]
-  ]) {
-    addNode("cradle", "tree", dx, dy, 48, v, s);
-  }
-  addNode("timbercrown", "berry_bush", -145, 110, 18);
-  addNode("timbercrown", "berry_bush", 165, -80, 16);
-  addNode("timbercrown", "branch_pile", 145, 125, 26);
-  addNode("timbercrown", "flint_pile", -195, -125, 20);
-  addNode("timbercrown", "stone_boulder", 110, 175, 38, void 0, 1.25);
-  addNode("timbercrown", "stone_boulder", -230, 35, 34, void 0, 1.1);
-  for (const [dx, dy, v, s] of [
-    [-305, -110, "cedar", 2.65],
-    [-235, 175, "pine", 2.3],
-    [-55, -225, "cedar", 2.55],
-    [245, -155, "pine", 2.25],
-    [295, 95, "cedar", 2.45],
-    [75, 195, "pine", 2.1],
-    [-345, 40, "cedar", 2.4],
-    [-145, -40, "pine", 2.05],
-    [145, -230, "cedar", 2.35]
-  ]) {
-    addNode("timbercrown", "tree", dx, dy, 62, v, s);
-  }
-  addNode("sunterrace", "berry_bush", -215, -125, 22);
-  addNode("sunterrace", "berry_bush", 225, 115, 22);
-  addNode("sunterrace", "branch_pile", -275, 155, 24);
-  addNode("sunterrace", "flint_pile", 150, -205, 18);
-  addNode("sunterrace", "stone_boulder", -115, 210, 34, void 0, 1.1);
-  addNode("sunterrace", "stone_boulder", 295, -90, 32, void 0, 1);
-  for (const [dx, dy, v, s] of [
-    [-395, -175, "orchard", 2.05],
-    [-360, 195, "oak", 1.98],
-    [325, -215, "orchard", 2.15],
-    [385, 165, "orchard", 1.95],
-    [55, 285, "oak", 1.9],
-    [-95, -265, "orchard", 1.88],
-    [455, -45, "orchard", 2]
-  ]) {
-    addNode("sunterrace", "tree", dx, dy, 48, v, s);
-  }
-  addNode("coppercrag", "copper_vein", -145, -80, 72);
-  addNode("coppercrag", "copper_vein", 135, -95, 72);
-  addNode("coppercrag", "iron_vein", -30, 125, 68);
-  addNode("coppercrag", "iron_vein", 165, 75, 68);
-  addNode("coppercrag", "stone_boulder", -200, 60, 46, void 0, 1.3);
-  addNode("coppercrag", "flint_pile", 105, -155, 28);
-  for (const [dx, dy, v, s] of [
-    [-255, -115, "pine", 1.82],
-    [245, -125, "pine", 1.78],
-    [85, 165, "pine", 1.75]
-  ]) {
-    addNode("coppercrag", "tree", dx, dy, 38, v, s);
-  }
-  addNode("mistatoll", "berry_bush", -85, 105, 16);
-  addNode("mistatoll", "flint_pile", 115, -95, 22);
-  addNode("mistatoll", "stone_boulder", -115, -65, 28, void 0, 0.95);
-  for (const [dx, dy, v, s] of [
-    [165, -85, "oak", 1.92],
-    [175, 95, "oak", 1.85],
-    [-135, -130, "pine", 1.8]
-  ]) {
-    addNode("mistatoll", "tree", dx, dy, 40, v, s);
-  }
-  addNode("starbloom", "berry_bush", -160, -65, 22);
-  addNode("starbloom", "berry_bush", 165, 85, 22);
-  addNode("starbloom", "branch_pile", -85, 195, 26);
-  addNode("starbloom", "stone_boulder", 205, -105, 36, void 0, 1.15);
-  addNode("starbloom", "copper_vein", -230, 135, 52);
-  for (const [dx, dy, v, s] of [
-    [-290, -95, "oak", 2.25],
-    [255, -165, "orchard", 2.05],
-    [-215, 210, "pine", 2.15],
-    [275, 135, "oak", 2.1],
-    [40, -255, "cedar", 2.3],
-    [-335, 55, "orchard", 1.95]
-  ]) {
-    addNode("starbloom", "tree", dx, dy, 52, v, s);
-  }
-  addNode("embervault", "iron_vein", -135, -115, 85);
-  addNode("embervault", "iron_vein", 155, -95, 85);
-  addNode("embervault", "copper_vein", -175, 105, 75);
-  addNode("embervault", "stone_boulder", 175, 125, 44, void 0, 1.25);
-  for (const [dx, dy, v, s] of [
-    [-295, -120, "pine", 1.7],
-    [285, -115, "pine", 1.65],
-    [-245, 165, "pine", 1.6]
-  ]) {
-    addNode("embervault", "tree", dx, dy, 35, v, s);
-  }
-  addNode("frostpeak", "iron_vein", -145, -100, 80);
-  addNode("frostpeak", "iron_vein", 155, -70, 80);
-  addNode("frostpeak", "stone_boulder", -85, 155, 42, void 0, 1.25);
-  addNode("frostpeak", "branch_pile", 195, 130, 26);
-  for (const [dx, dy, v, s] of [
-    [-255, -125, "cedar", 2.45],
-    [235, -140, "cedar", 2.35],
-    [-225, 150, "pine", 2.2],
-    [250, 115, "pine", 2.1],
-    [35, -245, "cedar", 2.5]
-  ]) {
-    addNode("frostpeak", "tree", dx, dy, 54, v, s);
-  }
+  const spawnSeededNodes = (islandId, kind, count, radMin, radMax, amount, variants, scaleMin = 1, scaleMax = 1, groveCenters) => {
+    const isl = ISLAND_DEFS[islandId];
+    for (let i = 0; i < count; i++) {
+      let chosenX = null;
+      let chosenY = null;
+      for (let attempt = 0; attempt < 42; attempt++) {
+        let ang;
+        let rad;
+        if (groveCenters && groveCenters.length > 0 && attempt < 26) {
+          const baseGrove = groveCenters[i % groveCenters.length];
+          ang = baseGrove + (rng() - 0.5) * 0.92;
+          rad = radMin + rng() * (radMax - radMin);
+        } else {
+          ang = rng() * Math.PI * 2;
+          rad = radMin + rng() * (radMax - radMin);
+        }
+        const wob = islandCoastWobble(isl, ang);
+        const cx = Math.round(isl.centerX + Math.cos(ang) * isl.radiusX * rad * wob);
+        const cy = Math.round(isl.centerY + Math.sin(ang) * isl.radiusY * rad * wob);
+        if (isValidNodeSpot(islandId, kind, cx, cy)) {
+          chosenX = cx;
+          chosenY = cy;
+          break;
+        }
+      }
+      if (chosenX === null || chosenY === null) continue;
+      const variant = variants && variants.length > 0 ? variants[i % variants.length] : void 0;
+      const sc = Number((scaleMin + rng() * (scaleMax - scaleMin)).toFixed(2));
+      nodes.push({
+        id: `node_${idx++}`,
+        islandId,
+        kind,
+        x: chosenX,
+        y: chosenY,
+        amount,
+        maxAmount: amount,
+        variant,
+        scale: sc
+      });
+    }
+  };
+  const makeGroves = (numGroves) => {
+    const startAng = rng() * Math.PI * 2;
+    const angles = [];
+    for (let g = 0; g < numGroves; g++) {
+      angles.push(startAng + g / numGroves * Math.PI * 2 + (rng() - 0.5) * 0.5);
+    }
+    return angles;
+  };
+  const cradleGroves = makeGroves(4);
+  spawnSeededNodes("cradle", "berry_bush", 3, 0.24, 0.52, 18);
+  spawnSeededNodes("cradle", "branch_pile", 2, 0.28, 0.58, 22);
+  spawnSeededNodes("cradle", "flint_pile", 1, 0.3, 0.56, 18);
+  spawnSeededNodes("cradle", "stone_boulder", 2, 0.32, 0.62, 33, void 0, 1.02, 1.18);
+  spawnSeededNodes("cradle", "tree", 24, 0.36, 0.78, 48, ["oak", "pine", "cedar", "oak"], 1.75, 2.32, cradleGroves);
+  const timberGroves = makeGroves(3);
+  spawnSeededNodes("timbercrown", "berry_bush", 2, 0.25, 0.54, 17);
+  spawnSeededNodes("timbercrown", "branch_pile", 2, 0.3, 0.6, 24);
+  spawnSeededNodes("timbercrown", "flint_pile", 1, 0.32, 0.58, 20);
+  spawnSeededNodes("timbercrown", "stone_boulder", 2, 0.34, 0.64, 36, void 0, 1.08, 1.25);
+  spawnSeededNodes("timbercrown", "tree", 22, 0.34, 0.78, 62, ["cedar", "pine", "cedar"], 2.02, 2.72, timberGroves);
+  const sunGroves = makeGroves(3);
+  spawnSeededNodes("sunterrace", "berry_bush", 2, 0.28, 0.58, 22);
+  spawnSeededNodes("sunterrace", "branch_pile", 1, 0.34, 0.62, 24);
+  spawnSeededNodes("sunterrace", "flint_pile", 1, 0.32, 0.6, 18);
+  spawnSeededNodes("sunterrace", "stone_boulder", 2, 0.34, 0.65, 33, void 0, 1, 1.15);
+  spawnSeededNodes("sunterrace", "tree", 17, 0.38, 0.76, 48, ["orchard", "oak", "pine"], 1.78, 2.22, sunGroves);
+  spawnSeededNodes("coppercrag", "copper_vein", 2, 0.26, 0.58, 72);
+  spawnSeededNodes("coppercrag", "iron_vein", 2, 0.28, 0.6, 68);
+  spawnSeededNodes("coppercrag", "stone_boulder", 2, 0.32, 0.62, 44, void 0, 1.15, 1.32);
+  spawnSeededNodes("coppercrag", "flint_pile", 1, 0.32, 0.56, 28);
+  spawnSeededNodes("coppercrag", "tree", 3, 0.42, 0.72, 38, ["pine"], 1.7, 1.88);
+  spawnSeededNodes("mistatoll", "berry_bush", 1, 0.32, 0.62, 16);
+  spawnSeededNodes("mistatoll", "flint_pile", 1, 0.34, 0.62, 22);
+  spawnSeededNodes("mistatoll", "stone_boulder", 1, 0.34, 0.6, 28, void 0, 0.92, 1.05);
+  spawnSeededNodes("mistatoll", "tree", 4, 0.38, 0.74, 40, ["oak", "pine"], 1.78, 1.95);
+  const starGroves = makeGroves(3);
+  spawnSeededNodes("starbloom", "berry_bush", 2, 0.26, 0.56, 22);
+  spawnSeededNodes("starbloom", "branch_pile", 1, 0.32, 0.6, 26);
+  spawnSeededNodes("starbloom", "stone_boulder", 1, 0.34, 0.62, 36, void 0, 1.08, 1.2);
+  spawnSeededNodes("starbloom", "copper_vein", 1, 0.4, 0.68, 52);
+  spawnSeededNodes("starbloom", "tree", 14, 0.36, 0.76, 52, ["oak", "orchard", "pine", "cedar"], 1.85, 2.34, starGroves);
+  spawnSeededNodes("embervault", "iron_vein", 2, 0.26, 0.56, 85);
+  spawnSeededNodes("embervault", "copper_vein", 1, 0.32, 0.62, 75);
+  spawnSeededNodes("embervault", "stone_boulder", 2, 0.32, 0.64, 44, void 0, 1.12, 1.28);
+  spawnSeededNodes("embervault", "tree", 3, 0.44, 0.74, 35, ["pine"], 1.58, 1.74);
+  const frostGroves = makeGroves(2);
+  spawnSeededNodes("frostpeak", "iron_vein", 2, 0.28, 0.56, 80);
+  spawnSeededNodes("frostpeak", "stone_boulder", 2, 0.32, 0.62, 42, void 0, 1.12, 1.28);
+  spawnSeededNodes("frostpeak", "branch_pile", 1, 0.34, 0.64, 26);
+  spawnSeededNodes("frostpeak", "tree", 12, 0.38, 0.74, 54, ["cedar", "pine"], 2, 2.54, frostGroves);
   return nodes;
 }
-function buildInitialExploreRuins() {
+function buildInitialExploreRuins(worldSeed) {
+  const rng = mulberry32((Math.floor(Math.abs(worldSeed)) || DEFAULT_WORLD_SEED) + 313);
+  const place = (id, rFrac) => {
+    const isl = ISLAND_DEFS[id];
+    const ang = rng() * Math.PI * 2;
+    const wob = islandCoastWobble(isl, ang);
+    return resolveLandPoint(
+      id,
+      isl.centerX + Math.cos(ang) * isl.radiusX * rFrac * wob,
+      isl.centerY + Math.sin(ang) * isl.radiusY * rFrac * wob,
+      rFrac > 0.18 ? 110 : 0
+    );
+  };
+  const sunPt = place("sunterrace", 0.32);
+  const starPt = place("starbloom", 0.14);
+  const timberPt = place("timbercrown", 0.36);
+  const frostPt = place("frostpeak", 0.18);
+  const emberPt = place("embervault", 0.14);
   return [
     {
       id: "ruin_sun_obelisk",
       name: "Sun-Terrace Solarium",
       islandId: "sunterrace",
       kind: "sun_obelisk",
-      x: ISLAND_DEFS.sunterrace.centerX + 125,
-      y: ISLAND_DEFS.sunterrace.centerY - 125,
+      x: sunPt.x,
+      y: sunPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: "+Wheat Seeds, Honey & Lore",
@@ -5648,8 +6292,8 @@ function buildInitialExploreRuins() {
       name: "Starbloom Observatory",
       islandId: "starbloom",
       kind: "star_observatory",
-      x: ISLAND_DEFS.starbloom.centerX - 15,
-      y: ISLAND_DEFS.starbloom.centerY - 10,
+      x: starPt.x,
+      y: starPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: "+Hearthlight Relics, Herbs & Lore",
@@ -5660,8 +6304,8 @@ function buildInitialExploreRuins() {
       name: "Whispering Cedar Totem",
       islandId: "timbercrown",
       kind: "cedar_totem",
-      x: ISLAND_DEFS.timbercrown.centerX - 240,
-      y: ISLAND_DEFS.timbercrown.centerY + 115,
+      x: timberPt.x,
+      y: timberPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: "+Timber, Tea & Lore",
@@ -5672,8 +6316,8 @@ function buildInitialExploreRuins() {
       name: "Frostpeak Star-Shrine",
       islandId: "frostpeak",
       kind: "frost_shrine",
-      x: ISLAND_DEFS.frostpeak.centerX + 20,
-      y: ISLAND_DEFS.frostpeak.centerY - 25,
+      x: frostPt.x,
+      y: frostPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: "+Iron, Hearthlight & Crystal Lore",
@@ -5684,8 +6328,8 @@ function buildInitialExploreRuins() {
       name: "Ashen Iron Vault",
       islandId: "embervault",
       kind: "ashen_vault",
-      x: ISLAND_DEFS.embervault.centerX + 10,
-      y: ISLAND_DEFS.embervault.centerY - 15,
+      x: emberPt.x,
+      y: emberPt.y,
       exploredCount: 0,
       cooldownTimer: 0,
       lootLabel: "+Heavy Iron, Bronze & War Spoils",
@@ -5693,37 +6337,32 @@ function buildInitialExploreRuins() {
     }
   ];
 }
-function buildInitialWildHerds() {
+function buildInitialWildHerds(worldSeed) {
   const herds = [];
-  const spawn = (id, kind, islandId, dx, dy, color) => {
+  const rng = mulberry32((Math.floor(Math.abs(worldSeed)) || DEFAULT_WORLD_SEED) + 521);
+  const spawn = (id, kind, islandId, color) => {
     const isl = ISLAND_DEFS[islandId];
-    let sx = isl.centerX + dx;
-    let sy = isl.centerY + dy;
-    if (classifyMainWorldTerrain({ bridges: [] }, sx, sy) === "deep_water") {
-      for (let step = 1; step <= 12; step++) {
-        const ang = step / 12 * Math.PI * 2;
-        const rScale = step <= 6 ? 0.45 : 0.25;
-        const cx = isl.centerX + Math.cos(ang) * isl.radiusX * rScale;
-        const cy = isl.centerY + Math.sin(ang) * isl.radiusY * rScale;
-        if (classifyMainWorldTerrain({ bridges: [] }, cx, cy) !== "deep_water") {
-          sx = Math.round(cx);
-          sy = Math.round(cy);
-          break;
-        }
-      }
-    }
-    const scale = kind === "boar" ? Number((0.95 + Math.random() * 0.37).toFixed(2)) : kind === "deer" ? Number((0.92 + Math.random() * 0.34).toFixed(2)) : Number((0.76 + Math.random() * 0.28).toFixed(2));
+    const ang = rng() * Math.PI * 2;
+    const rad = 0.24 + rng() * 0.42;
+    const wob = islandCoastWobble(isl, ang);
+    const pos = resolveLandPoint(
+      islandId,
+      isl.centerX + Math.cos(ang) * isl.radiusX * rad * wob,
+      isl.centerY + Math.sin(ang) * isl.radiusY * rad * wob,
+      70
+    );
+    const scale = kind === "boar" ? Number((0.95 + rng() * 0.37).toFixed(2)) : kind === "deer" ? Number((0.92 + rng() * 0.34).toFixed(2)) : Number((0.76 + rng() * 0.28).toFixed(2));
     const hp = Math.round((kind === "boar" ? 58 : kind === "deer" ? 32 : 14) * scale);
     herds.push({
       id,
       kind,
       islandId,
-      x: sx,
-      y: sy,
-      targetX: sx + 35,
-      targetY: sy,
+      x: pos.x,
+      y: pos.y,
+      targetX: pos.x + 35,
+      targetY: pos.y,
       facing: 1,
-      pauseTimer: Math.random() * 2,
+      pauseTimer: rng() * 2,
       hp,
       maxHp: hp,
       aggroTargetId: null,
@@ -5731,24 +6370,24 @@ function buildInitialWildHerds() {
       scale
     });
   };
-  spawn("wild_r1", "rabbit", "cradle", -170, 140, "#E5DDD0");
-  spawn("wild_r2", "rabbit", "cradle", 210, -85, "#C8B094");
-  spawn("wild_r4", "rabbit", "cradle", 95, 220, "#DDD2C2");
-  spawn("wild_d1", "deer", "cradle", -290, -110, "#A67249");
-  spawn("wild_d5", "deer", "cradle", 295, 110, "#9E683E");
-  spawn("wild_d2", "deer", "timbercrown", -145, -95, "#9E683E");
-  spawn("wild_d3", "deer", "timbercrown", 175, 115, "#A67249");
-  spawn("wild_b1", "boar", "timbercrown", 55, -165, "#5E463A");
-  spawn("wild_b2", "boar", "timbercrown", -210, 135, "#4D382E");
-  spawn("wild_r3", "rabbit", "sunterrace", 105, -135, "#D4C7B8");
-  spawn("wild_d4", "deer", "sunterrace", -165, 85, "#B07B52");
-  spawn("wild_d6", "deer", "sunterrace", 240, 160, "#A67249");
-  spawn("wild_b3", "boar", "coppercrag", 95, -45, "#56433B");
-  spawn("wild_r5", "rabbit", "starbloom", 110, 95, "#EAE2D6");
-  spawn("wild_d7", "deer", "starbloom", 165, -95, "#A67249");
-  spawn("wild_d8", "deer", "frostpeak", -120, 105, "#D8DEE6");
-  spawn("wild_b4", "boar", "frostpeak", 145, -60, "#5B5654");
-  spawn("wild_b5", "boar", "embervault", 135, -75, "#3C2D28");
+  spawn("wild_r1", "rabbit", "cradle", "#E5DDD0");
+  spawn("wild_r2", "rabbit", "cradle", "#C8B094");
+  spawn("wild_r4", "rabbit", "cradle", "#DDD2C2");
+  spawn("wild_d1", "deer", "cradle", "#A67249");
+  spawn("wild_d5", "deer", "cradle", "#9E683E");
+  spawn("wild_d2", "deer", "timbercrown", "#9E683E");
+  spawn("wild_d3", "deer", "timbercrown", "#A67249");
+  spawn("wild_b1", "boar", "timbercrown", "#5E463A");
+  spawn("wild_b2", "boar", "timbercrown", "#4D382E");
+  spawn("wild_r3", "rabbit", "sunterrace", "#D4C7B8");
+  spawn("wild_d4", "deer", "sunterrace", "#B07B52");
+  spawn("wild_d6", "deer", "sunterrace", "#A67249");
+  spawn("wild_b3", "boar", "coppercrag", "#56433B");
+  spawn("wild_r5", "rabbit", "starbloom", "#EAE2D6");
+  spawn("wild_d7", "deer", "starbloom", "#A67249");
+  spawn("wild_d8", "deer", "frostpeak", "#D8DEE6");
+  spawn("wild_b4", "boar", "frostpeak", "#5B5654");
+  spawn("wild_b5", "boar", "embervault", "#3C2D28");
   return herds;
 }
 function canVillagerWork(world, v) {
@@ -5874,6 +6513,7 @@ function makeNativeClanVillager(id, name, islandId, cultureId, cloakColor, hairC
   const stats = rollUnitStats(traits, isAshen);
   const skills = rollStarterSkills("adult", isAshen);
   const maxHp = isAshen ? 105 : 115;
+  const spawnPos = resolveLandPoint(islandId, isl.centerX + dx, isl.centerY + dy);
   return {
     id,
     name,
@@ -5940,10 +6580,10 @@ function makeNativeClanVillager(id, name, islandId, cultureId, cloakColor, hairC
     autonomyReason: `Gathering & building ${CULTURES[cultureId].name} life on ${isl.name}.`,
     thoughtBubble: null,
     thoughtTimer: 0,
-    x: isl.centerX + dx,
-    y: isl.centerY + dy,
-    targetX: isl.centerX + dx * 0.5,
-    targetY: isl.centerY + dy * 0.5,
+    x: spawnPos.x,
+    y: spawnPos.y,
+    targetX: spawnPos.x,
+    targetY: spawnPos.y,
     facing: 1,
     animPhase: Math.random() * 6,
     bounceScale: 1,
@@ -5951,7 +6591,7 @@ function makeNativeClanVillager(id, name, islandId, cultureId, cloakColor, hairC
     birthCooldownDays: 99,
     attackCooldown: 0,
     edgeAckCooldown: 0,
-    stuckState: { lastX: isl.centerX + dx, lastY: isl.centerY + dy, timer: 0, detourSign: 1 },
+    stuckState: { lastX: spawnPos.x, lastY: spawnPos.y, timer: 0, detourSign: 1 },
     personality: buildNpcPersonality(id, traits, 0.55, 0.72, isAshen),
     knowledge: createKnowledgeProfile("native"),
     memories: [
@@ -6354,9 +6994,18 @@ function buildNativeOutposts() {
     makeBastionGuard("ash_guard_2", "Krag Ashblade", 72, 24),
     makeBastionGuard("ash_guard_3", "Pyra Ember", -12, 85)
   ];
+  const landCheck = (id, x, y) => resolveLandPoint(id, x, y);
+  for (const b of buildings) {
+    if (b.type === "dock") continue;
+    const p = landCheck(b.islandId, b.x, b.y);
+    b.x = p.x;
+    b.y = p.y;
+  }
   return { buildings, boats, clanVillagers, raiders };
 }
-function createInitialWorld(gameMode = "whisper_solo") {
+function createInitialWorld(gameMode = "whisper_solo", seed) {
+  const worldSeed = typeof seed === "number" && Number.isFinite(seed) && seed > 0 ? Math.floor(seed) : Math.floor(1 + Math.random() * 2147483640) || DEFAULT_WORLD_SEED;
+  applyArchipelagoSeed(worldSeed);
   const isSiege = gameMode === "shared_siege";
   const isSovereign = gameMode === "sovereign_sandbox";
   const adam = makeFounder(
@@ -6537,6 +7186,7 @@ function createInitialWorld(gameMode = "whisper_solo") {
   };
   const world = {
     version: CURRENT_WORLD_VERSION,
+    worldSeed,
     gameMode,
     era: 1,
     localHomeIslandId: "cradle",
@@ -6564,16 +7214,16 @@ function createInitialWorld(gameMode = "whisper_solo") {
     bridges: INITIAL_SKY_BRIDGES.map((b) => ({ ...b })),
     cableways: INITIAL_SKY_CABLEWAYS.map((c) => ({ ...c })),
     gliders: [],
-    exploreRuins: buildInitialExploreRuins(),
+    exploreRuins: buildInitialExploreRuins(worldSeed),
     projectiles: [],
-    wildNodes: buildInitialWildNodes(),
+    wildNodes: buildInitialWildNodes(worldSeed),
     villagers: initialVillagers,
     clanVillagers: isSiege ? [] : [...outpost.clanVillagers],
     raiders: isSiege ? [] : [...outpost.raiders],
     buildings: startingBuildings,
     placedSuggestions: [],
     livestock: [],
-    wildHerds: buildInitialWildHerds(),
+    wildHerds: buildInitialWildHerds(worldSeed),
     boats: isSovereign ? [...outpost.boats] : [],
     memorials: [],
     diplomacy: {
@@ -9075,7 +9725,7 @@ function tickForeignPerimeterAndParley(world, _dt) {
     if (v.visitStatus === "admitted" && v.visitTargetIslandId === v.islandId) {
       continue;
     }
-    const nd = islandNormalizedDist(isl, v.x, v.y);
+    const nd = islandNormalizedDist2(isl, v.x, v.y);
     if (nd < 0.66) {
       const rdx = v.x - isl.centerX;
       const rdy = v.y - isl.centerY;
