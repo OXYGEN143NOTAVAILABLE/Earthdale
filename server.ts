@@ -6,11 +6,14 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { ISLAND_DEFS } from './src/game/catalog';
 import {
-  applyWorldCommand,
+  applyMultiplayerWorldCommand,
+  enforceMultiplayerClock,
+  stepMultiplayerWorld,
+} from './src/game/multiplayerSync';
+import {
   assignPlayerVillageInWorld,
   createInitialWorld,
   createParticlePool,
-  stepSimulation,
 } from './src/game/simulation';
 import type {
   ClientWsMsg,
@@ -78,7 +81,7 @@ setInterval(() => {
     }
     const dt = Math.min(0.18, Math.max(0.02, (now - room.lastTickMs) / 1000));
     room.lastTickMs = now;
-    stepSimulation(room.world, dt, room.particles, false);
+    stepMultiplayerWorld(room.world, dt, room.particles);
     broadcastRoom(room, {
       type: 'world_state',
       world: room.world,
@@ -128,7 +131,9 @@ async function startServer() {
 
       if (parsed.type === 'create_room') {
         const code = makeRoomCode();
-        const world = createInitialWorld(parsed.gameMode || 'sovereign_sandbox');
+        const world = enforceMultiplayerClock(
+          createInitialWorld(parsed.gameMode || 'sovereign_sandbox'),
+        );
         const homeIslandId = assignPlayerVillageInWorld(world, playerId, 'cradle');
         const homeDef = ISLAND_DEFS[homeIslandId];
         const room: GameRoom = {
@@ -215,7 +220,12 @@ async function startServer() {
       }
 
       if (parsed.type === 'command') {
-        const res = applyWorldCommand(activeRoom.world, parsed.cmd, activeRoom.particles, playerId);
+        const res = applyMultiplayerWorldCommand(
+          activeRoom.world,
+          parsed.cmd,
+          activeRoom.particles,
+          playerId,
+        );
         sendMsg(ws, { type: 'toast', message: res.message, ok: res.ok });
         broadcastRoom(activeRoom, {
           type: 'world_state',

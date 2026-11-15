@@ -228,8 +228,25 @@ export function AnimalInspector({
             <span className="font-semibold text-[#F3EAD6]">{scale.toFixed(2)}×</span>
           </div>
           <div className="px-2 py-1 rounded-sm bg-[#1A202D] border border-[#8E6B35]/30">
-            <span className="text-[#9C907D] block">Status</span>
-            <span className="font-semibold text-[#FDE68A]">{herd.aggroTargetId ? 'Engaged' : 'Roaming'}</span>
+            <span className="text-[#9C907D] block">Behavior</span>
+            <span className="font-semibold text-[#FDE68A] capitalize">
+              {herd.aggroTargetId ? 'Engaged' : (herd.behaviorState ?? 'wandering')}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-1.5 text-[10px] tabular-nums">
+          <div className="px-1.5 py-1 rounded-sm bg-[#1A202D] border border-[#8E6B35]/25">
+            <span className="text-[#9C907D] block">Hunger</span>
+            <span className="font-semibold text-[#A8DEC0]">{Math.round(herd.hunger ?? 76)}%</span>
+          </div>
+          <div className="px-1.5 py-1 rounded-sm bg-[#1A202D] border border-[#8E6B35]/25">
+            <span className="text-[#9C907D] block">Thirst</span>
+            <span className="font-semibold text-[#7CC4F2]">{Math.round(herd.thirst ?? 76)}%</span>
+          </div>
+          <div className="px-1.5 py-1 rounded-sm bg-[#1A202D] border border-[#8E6B35]/25">
+            <span className="text-[#9C907D] block">Energy</span>
+            <span className="font-semibold text-[#FDE68A]">{Math.round(herd.energy ?? 85)}%</span>
           </div>
         </div>
 

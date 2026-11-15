@@ -173,7 +173,7 @@ export type LivestockKind = 'sheep' | 'pig' | 'fowl';
 
 export type WildHerdKind = 'rabbit' | 'deer' | 'boar';
 
-export type BoatKind = 'fishing_skiff' | 'cargo_merchant' | 'war_galley';
+export type BoatKind = 'fishing_skiff' | 'cargo_merchant' | 'war_galley' | 'migrant_skiff';
 
 export type WeaponType = 'none' | 'flint_spear' | 'bow' | 'bronze_blade' | 'iron_blade';
 
@@ -457,11 +457,119 @@ export interface WildNodeEntity {
   scale?: number;
 }
 
+export type KnowledgeDomainId =
+  | 'foraging'
+  | 'woodcraft'
+  | 'stonecraft'
+  | 'firecraft'
+  | 'toolmaking'
+  | 'construction'
+  | 'cooking'
+  | 'healing'
+  | 'social_customs'
+  | 'sailing';
+
+export interface NpcPersonality {
+  curiosity: number;       // 0..1
+  bravery: number;         // 0..1
+  sociability: number;     // 0..1
+  industriousness: number; // 0..1
+  discipline: number;      // 0..1
+  empathy: number;         // 0..1
+  greed: number;           // 0..1
+  stubbornness: number;    // 0..1
+  honesty: number;         // 0..1
+  caution: number;         // 0..1
+  archetype: string;
+}
+
+export type NpcMemoryKind =
+  | 'discovery'
+  | 'social'
+  | 'survival'
+  | 'work'
+  | 'construction'
+  | 'rule'
+  | 'conflict'
+  | 'celebration';
+
+export interface NpcMemoryEntry {
+  id: string;
+  day: number;
+  timeOfDay: number;
+  kind: NpcMemoryKind;
+  summary: string;
+  actorIds: string[];
+  importance: number; // 1..10
+  sentiment: 'positive' | 'neutral' | 'negative';
+}
+
+export interface NpcDecisionCandidate {
+  action: string;
+  label: string;
+  score: number;
+  valid: boolean;
+  blockedReason?: string;
+  reason: string;
+}
+
+export interface NpcDecisionTrace {
+  chosenAction: string;
+  chosenLabel: string;
+  reason: string;
+  goal: string;
+  validated: boolean;
+  evaluatedAtDay: number;
+  evaluatedAtTime: number;
+  candidates: NpcDecisionCandidate[];
+}
+
 export interface EntityStuckState {
   lastX: number;
   lastY: number;
   timer: number;
   detourSign: 1 | -1;
+  waypoints?: { x: number; y: number }[];
+  cachedGoalX?: number;
+  cachedGoalY?: number;
+  cachedIslandId?: IslandId;
+  recoveryCount?: number;
+  navBlockedReason?: string | null;
+  terrainKind?: 'land' | 'shallow_water' | 'deep_water' | 'bridge';
+}
+
+export type WorldEventCategory =
+  | 'social'
+  | 'economy'
+  | 'construction'
+  | 'migration'
+  | 'rule'
+  | 'survival'
+  | 'wildlife';
+
+export type WorldEventSignificance = 'minor' | 'notable' | 'major';
+
+export interface WorldEvent {
+  id: string;
+  day: number;
+  timeOfDay: number;
+  category: WorldEventCategory;
+  significance: WorldEventSignificance;
+  summary: string;
+  islandId: IslandId;
+  participantIds: string[];
+  witnessIds?: string[];
+}
+
+export interface SocialRelationshipRecord {
+  score: number;
+  stage: SocialTier;
+  introduced: boolean;
+  conversations: number;
+  positiveEvents: number;
+  negativeEvents: number;
+  lastDay: number;
+  lastInteractionKind?: 'greeting' | 'chat' | 'ritual' | 'parley' | 'quarrel' | 'hangout' | 'gift';
 }
 
 export interface VillagerEntity {
@@ -515,6 +623,7 @@ export interface VillagerEntity {
   currentDialogue: string;
   lastMemory: string;
   relationships: Record<string, number>;
+  socialRecords?: Record<string, SocialRelationshipRecord>;
   hangOutTargetId: string | null;
   socialCooldown: number;
   pairChatCooldowns?: Record<string, number>;
@@ -544,6 +653,21 @@ export interface VillagerEntity {
   rtsOrder?: RtsOrder | null;
   drafted?: boolean;
   teachCooldown?: number;
+
+  // Milestone 3+: Continuous personality, 10 knowledge domains, bounded memories, explainable AI trace, carry inventory & standing
+  personality?: NpcPersonality;
+  knowledge?: Record<KnowledgeDomainId, number>;
+  memories?: NpcMemoryEntry[];
+  decisionTrace?: NpcDecisionTrace;
+  carriedResource?: keyof VillageResources | null;
+  carriedAmount?: number;
+  carryCapacity?: number;
+  reputation?: number;
+  banished?: boolean;
+  offenseCount?: number;
+  contributionCount?: number;
+  knownIncidentIds?: string[];
+  rumorIncidentIds?: string[];
 }
 
 export interface CropPlotState {
@@ -552,6 +676,8 @@ export interface CropPlotState {
   fertility: number; // 0..1
   irrigated: boolean;
 }
+
+export type ConstructionStage = 'foundation' | 'framework' | 'walls' | 'roof' | 'complete';
 
 export interface BuildingEntity {
   id: string;
@@ -573,6 +699,10 @@ export interface BuildingEntity {
   benefitDescription: string;
   cropState?: CropPlotState;
   livestockKind?: LivestockKind;
+  constructionStage?: ConstructionStage;
+  requiredMaterials?: Partial<Record<keyof VillageResources, number>>;
+  deliveredMaterials?: Partial<Record<keyof VillageResources, number>>;
+  pausedForMaterials?: boolean;
 }
 
 export interface ConstructionProject {
@@ -581,6 +711,8 @@ export interface ConstructionProject {
   progress: number;
   duration: number;
   isUpgrade: boolean;
+  stage?: ConstructionStage;
+  pausedForMaterials?: boolean;
 }
 
 export interface PlacedSuggestion {
@@ -611,6 +743,15 @@ export interface LivestockEntity {
   scale?: number;
 }
 
+export type AnimalBehaviorState =
+  | 'wandering'
+  | 'grazing'
+  | 'drinking'
+  | 'resting'
+  | 'fleeing'
+  | 'fighting'
+  | 'mating';
+
 export interface WildHerdEntity {
   id: string;
   kind: WildHerdKind;
@@ -627,6 +768,11 @@ export interface WildHerdEntity {
   color: string;
   scale?: number;
   stuckState?: EntityStuckState;
+  behaviorState?: AnimalBehaviorState;
+  hunger?: number;
+  thirst?: number;
+  energy?: number;
+  reproCooldown?: number;
 }
 
 export interface BoatEntity {
@@ -647,6 +793,7 @@ export interface BoatEntity {
   cargoText: string;
   passengerIds: string[];
   tripTimer: number;
+  arrivalId?: string | null;
 }
 
 export interface MemorialStone {
@@ -695,13 +842,78 @@ export interface ArrivalCandidate {
   parentIds: [string, string] | null;
   parentNames: string | null;
   arrivedDay: number;
+  boatId?: string | null;
+  boatPhase?: 'approaching' | 'docked' | 'disembarked' | 'departing';
+}
+
+export type CommunityRuleKind =
+  | 'no_theft'
+  | 'fair_share'
+  | 'no_assault'
+  | 'protect_kin'
+  | 'shared_duty';
+
+export interface CommunityRule {
+  id: string;
+  islandId: IslandId;
+  kind: CommunityRuleKind;
+  title: string;
+  description: string;
+  establishedDay: number;
+  triggerReason: string;
+  severity: 'informal' | 'formal';
+  enforced: boolean;
+}
+
+export type OffenseKind = 'theft' | 'hoarding' | 'assault' | 'sabotage' | 'rule_breach';
+
+export interface VillageIncident {
+  id: string;
+  day: number;
+  timeOfDay: number;
+  islandId: IslandId;
+  perpetratorId: string;
+  victimId?: string | null;
+  kind: OffenseKind;
+  severity: number;
+  summary: string;
+  witnessIds: string[];
+  rumorIds: string[];
+  addressed: boolean;
+}
+
+export interface DisputeVote {
+  voterId: string;
+  voterName: string;
+  decision: 'banish' | 'warn' | 'reconcile' | 'defend';
+  weight: number;
+  reason: string;
+  firsthandWitness: boolean;
+}
+
+export interface DisputeCase {
+  id: string;
+  islandId: IslandId;
+  accusedId: string;
+  accusedName: string;
+  accuserId: string;
+  accuserName: string;
+  reason: string;
+  openedDay: number;
+  status: 'confrontation' | 'deliberation' | 'banished' | 'reconciled' | 'restricted';
+  deliberationTimer: number;
+  votesForBanish: number;
+  votesAgainstBanish: number;
+  votes: DisputeVote[];
+  outcomeSummary?: string;
+  resolvedDay?: number;
 }
 
 export interface ChronicleEntry {
   id: string;
   day: number;
   text: string;
-  kind: 'birth' | 'arrival' | 'chief' | 'build' | 'bond' | 'era' | 'festival' | 'ruin' | 'tech' | 'voyage' | 'war' | 'death';
+  kind: 'birth' | 'arrival' | 'chief' | 'build' | 'bond' | 'era' | 'festival' | 'ruin' | 'tech' | 'voyage' | 'war' | 'death' | 'governance';
 }
 
 export interface AspirationItem {
@@ -803,6 +1015,10 @@ export interface WorldState {
 
   pendingArrivals: ArrivalCandidate[];
   chronicle: ChronicleEntry[];
+  eventLog?: WorldEvent[];
+  communityRules?: CommunityRule[];
+  incidents?: VillageIncident[];
+  disputes?: DisputeCase[];
   completedAspirations: string[];
   chiefId: string | null;
   chiefFocus: ChiefFocus;
@@ -862,6 +1078,9 @@ export interface HudSnapshot {
   diplomacy: Record<CultureId, CultureDiplomacy>;
   pendingArrivals: ArrivalCandidate[];
   chronicle: ChronicleEntry[];
+  eventLog?: WorldEvent[];
+  communityRules?: CommunityRule[];
+  disputes?: DisputeCase[];
   aspirations: AspirationItem[];
   chiefId: string | null;
   chiefFocus: ChiefFocus;

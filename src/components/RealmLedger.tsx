@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Anchor,
   ArrowRightLeft,
@@ -9,6 +9,7 @@ import {
   Lightbulb,
   Lock,
   MapPin,
+  MessageSquareText,
   Package,
   Shield,
   Skull,
@@ -17,6 +18,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
+import { queryWorldEvents } from '../game/eventBus';
 import {
   ERA_LABELS,
   ISLAND_DEFS,
@@ -49,6 +51,7 @@ import type {
   RationMode,
   TechBranch,
   VillageResources,
+  WorldEventCategory,
 } from '../game/types';
 import { BuildingSvg } from './StorybookIcons';
 
@@ -79,10 +82,30 @@ interface RealmLedgerProps {
   onSpawnVillager?: (islandId: IslandId) => void;
   onUnlockAllTech?: () => void;
   onFocusIsland: (islandId: IslandId) => void;
+  onInspectVillager?: (villagerId: string) => void;
   onClose: () => void;
 }
 
-type LedgerTab = 'structures' | 'resources' | 'tech' | 'islands' | 'diplomacy' | 'lineage';
+type LedgerTab = 'structures' | 'resources' | 'tech' | 'islands' | 'diplomacy' | 'lineage' | 'social_log';
+
+const EVENT_CATEGORY_META: { id: WorldEventCategory | 'all'; label: string; badgeClass: string }[] = [
+  { id: 'all', label: 'All', badgeClass: 'text-[#F3EAD6] border-[#8E6B35]/40 bg-[#1B2230]' },
+  { id: 'social', label: 'Social', badgeClass: 'text-[#F472B6] border-[#F472B6]/40 bg-[#2A1D2B]' },
+  { id: 'economy', label: 'Economy', badgeClass: 'text-[#8CE0AC] border-[#589674]/45 bg-[#1B2B23]' },
+  { id: 'construction', label: 'Build', badgeClass: 'text-[#E5AF47] border-[#E5AF47]/45 bg-[#2B2316]' },
+  { id: 'migration', label: 'Migration', badgeClass: 'text-[#A8D8EA] border-[#6E8AB5]/45 bg-[#1B2433]' },
+  { id: 'rule', label: 'Rules', badgeClass: 'text-[#C4B5FD] border-[#8B5CF6]/45 bg-[#241E36]' },
+  { id: 'survival', label: 'Survival', badgeClass: 'text-[#E38589] border-[#C8666B]/45 bg-[#2E1A1E]' },
+  { id: 'wildlife', label: 'Wildlife', badgeClass: 'text-[#FDBA74] border-[#EA580C]/40 bg-[#2C1F17]' },
+];
+
+function formatEventClock(timeOfDay: number): string {
+  const clamped = ((timeOfDay % 1) + 1) % 1;
+  const totalMinutes = Math.floor(clamped * 24 * 60);
+  const hh = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+  const mm = String(totalMinutes % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
 
 const BRANCH_ORDER: TechBranch[] = [
   'hearth_shelter',
@@ -137,6 +160,7 @@ export function RealmLedger({
   onSpawnVillager,
   onUnlockAllTech,
   onFocusIsland,
+  onInspectVillager,
   onClose,
 }: RealmLedgerProps) {
   const [tab, setTab] = useState<LedgerTab>('structures');
@@ -149,12 +173,31 @@ export function RealmLedger({
   const [caravanResource, setCaravanResource] = useState<keyof VillageResources>('timber');
   const [caravanAmount, setCaravanAmount] = useState<number>(10);
   const [lineageOnlyHome, setLineageOnlyHome] = useState<boolean>(false);
+  const [eventFilter, setEventFilter] = useState<WorldEventCategory | 'all'>('all');
 
   const isSovereign = gameMode === 'sovereign_sandbox';
   const unlockedSet = new Set(hud.unlockedTechIds);
   const frontierIds = new Set(getAvailableFrontierTechs(hud.unlockedTechIds).map((t) => t.id));
   const blueprints = getBlueprintsList();
   const techMods = getTechModifiers(hud.unlockedTechIds);
+
+  const liveActorsById = useMemo(() => {
+    const map = new Map<string, { name: string; alive: boolean }>();
+    for (const v of hud.villagers) map.set(v.id, { name: v.name, alive: true });
+    for (const cv of hud.clanVillagers) map.set(cv.id, { name: cv.name, alive: true });
+    for (const r of hud.raiders) map.set(r.id, { name: r.name, alive: false });
+    for (const rec of Object.values(hud.lineage ?? {})) {
+      if (!map.has(rec.id)) {
+        map.set(rec.id, { name: rec.name, alive: false });
+      }
+    }
+    return map;
+  }, [hud.villagers, hud.clanVillagers, hud.raiders, hud.lineage]);
+
+  const filteredEvents = useMemo(
+    () => queryWorldEvents(hud.eventLog, { category: eventFilter, limit: 80 }),
+    [hud.eventLog, eventFilter],
+  );
 
   const homeRes = hud.villageResources?.[homeId] ?? hud.resources;
   const homeFlow = hud.resourceFlows?.[homeId] ?? {
@@ -172,7 +215,7 @@ export function RealmLedger({
   return (
     <aside
       aria-label="Realm Ledger"
-      className="pointer-events-auto kingdom-frame fixed top-14 left-3.5 z-20 w-[490px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-11rem)] flex flex-col rounded p-3.5 text-[#F3EAD6] hud-panel"
+      className="pointer-events-auto kingdom-frame fixed top-14 left-3.5 z-20 w-[520px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-11rem)] flex flex-col rounded p-3.5 text-[#F3EAD6] hud-panel"
     >
       {/* Header */}
       <div className="flex items-center justify-between pb-2.5 border-b border-[#8E6B35]/45">
@@ -194,8 +237,8 @@ export function RealmLedger({
         </button>
       </div>
 
-      {/* 6 Tabs */}
-      <div className="mt-2.5 grid grid-cols-6 gap-1 bg-[#141822] p-1 rounded border border-[#8E6B35]/35 text-[10.5px] font-medium">
+      {/* 7 Tabs */}
+      <div className="mt-2.5 grid grid-cols-4 sm:grid-cols-7 gap-1 bg-[#141822] p-1 rounded border border-[#8E6B35]/35 text-[10px] font-medium">
         {(
           [
             { id: 'structures', label: 'Build' },
@@ -204,6 +247,7 @@ export function RealmLedger({
             { id: 'islands', label: 'Islands' },
             { id: 'diplomacy', label: 'Cultures' },
             { id: 'lineage', label: 'Lineage' },
+            { id: 'social_log', label: 'Social Log' },
           ] as const
         ).map((t) => (
           <button
@@ -1174,6 +1218,164 @@ export function RealmLedger({
                 );
               });
             })()}
+          </div>
+        )}
+
+        {tab === 'social_log' && (
+          <div className="space-y-2.5 text-[11px]">
+            {/* Emergent Community Rules & Council Disputes */}
+            <div className="p-2 rounded-sm bg-[#171D29] border border-[#8E6B35]/35 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[#C4B5FD] flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Community Rules &amp; Councils</span>
+                </span>
+                <span className="text-[10px] text-[#9EB1C2] tabular-nums">
+                  {(hud.communityRules ?? []).length} rules · {(hud.disputes ?? []).length} councils
+                </span>
+              </div>
+
+              {(hud.communityRules ?? []).length === 0 && (hud.disputes ?? []).length === 0 ? (
+                <p className="text-[10.5px] text-[#B4A995] italic">
+                  Villages start without formal laws; community rules and council votes emerge naturally from shared hardships and conduct.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {(hud.communityRules ?? []).map((rule) => (
+                    <div
+                      key={rule.id}
+                      className="p-1.5 rounded-sm bg-[#121721] border border-[#8B5CF6]/35 space-y-0.5"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-[10px]">
+                        <span className="font-semibold text-[#DDD6FE]">
+                          {rule.title} · {ISLAND_DEFS[rule.islandId]?.name}
+                        </span>
+                        <span className="text-[#9EB1C2] uppercase text-[9px] tabular-nums">
+                          {rule.severity} · D{rule.establishedDay}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#C8BCA6] leading-snug">{rule.description}</p>
+                    </div>
+                  ))}
+                  {(hud.disputes ?? []).slice(0, 5).map((disp) => (
+                    <div
+                      key={disp.id}
+                      className="p-1.5 rounded-sm bg-[#211A24] border border-[#E38589]/40 space-y-0.5"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-[10px]">
+                        <span className="font-semibold text-[#FDE2E3]">
+                          Council: {disp.accusedName} (by {disp.accuserName.split(' ')[0]})
+                        </span>
+                        <span className="uppercase text-[9px] font-semibold text-[#F0B46E] tabular-nums">
+                          {disp.status} · {disp.votesForBanish}–{disp.votesAgainstBanish}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#D8CEBA] leading-snug">
+                        {disp.outcomeSummary ?? `Deliberating: ${disp.reason}`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-[#E5AF47] flex items-center gap-1.5">
+                <MessageSquareText className="w-3.5 h-3.5" />
+                <span>Living Event &amp; Social Log</span>
+              </span>
+              <span className="text-[10px] text-[#9EB1C2] tabular-nums">
+                {filteredEvents.length} recorded
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-1 bg-[#141822] p-1 rounded border border-[#8E6B35]/35 text-[10px]">
+              {EVENT_CATEGORY_META.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setEventFilter(cat.id)}
+                  className={`px-2 py-0.5 rounded-sm cursor-pointer transition-colors ${
+                    eventFilter === cat.id
+                      ? 'bg-[#D69635] text-[#14161D] font-semibold'
+                      : 'text-[#C8BCA6] hover:text-[#F7EFDD] hover:bg-[#212836]'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            {filteredEvents.length === 0 ? (
+              <div className="p-4 rounded-sm bg-[#1A202D] border border-[#8E6B35]/30 text-center text-[#B4A995]">
+                No recorded events match this filter yet. Entries appear strictly when villagers meet, trade, build, migrate, or celebrate.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {filteredEvents.map((ev) => {
+                  const catMeta = EVENT_CATEGORY_META.find((c) => c.id === ev.category) ?? EVENT_CATEGORY_META[0];
+                  const sigColor =
+                    ev.significance === 'major'
+                      ? 'text-[#FDE68A] border-[#E5AF47]/55'
+                      : ev.significance === 'notable'
+                        ? 'text-[#8CE0AC] border-[#589674]/45'
+                        : 'text-[#9EB1C2] border-[#8E6B35]/30';
+                  return (
+                    <div
+                      key={ev.id}
+                      className="p-2 rounded-sm bg-[#1B2230] border border-[#8E6B35]/35 space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`px-1.5 py-0.2 rounded-sm border font-semibold ${catMeta.badgeClass}`}>
+                            {catMeta.label}
+                          </span>
+                          <span className={`px-1.5 py-0.2 rounded-sm border uppercase text-[9px] font-semibold ${sigColor}`}>
+                            {ev.significance}
+                          </span>
+                          <span className="text-[#B4A995]">
+                            {ISLAND_DEFS[ev.islandId]?.name ?? ev.islandId}
+                          </span>
+                        </div>
+                        <span className="text-[#9EB1C2] shrink-0">
+                          Day {ev.day} · {formatEventClock(ev.timeOfDay)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#F3EAD6] leading-snug">{ev.summary}</p>
+                      {ev.participantIds.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-0.5">
+                          {ev.participantIds.map((pid) => {
+                            const actor = liveActorsById.get(pid);
+                            if (!actor) return null;
+                            if (actor.alive && onInspectVillager) {
+                              return (
+                                <button
+                                  key={pid}
+                                  type="button"
+                                  onClick={() => onInspectVillager(pid)}
+                                  className="px-1.5 py-0.5 rounded-sm bg-[#242E42] hover:bg-[#31405B] border border-[#6E8AB5]/45 text-[9.5px] font-medium text-[#DCE6F5] cursor-pointer"
+                                  title={`Focus & inspect ${actor.name}`}
+                                >
+                                  {actor.name}
+                                </button>
+                              );
+                            }
+                            return (
+                              <span
+                                key={pid}
+                                className="px-1.5 py-0.5 rounded-sm bg-[#141822] border border-[#8E6B35]/30 text-[9.5px] text-[#B4A995]"
+                              >
+                                {actor.name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,0 +1,1182 @@
+# EARTHDALE — COMPLETE NPC INTELLIGENCE, SOCIAL SIMULATION & CIVILIZATION PROGRESSION OVERHAUL
+
+## ROLE AND OBJECTIVE
+
+Act as a senior game systems architect, AI simulation engineer, gameplay programmer, and technical designer.
+
+Your task is to evolve the existing **Earthdale** project into a believable, autonomous civilization simulation.
+
+This is an enhancement of an existing game, NOT a request to rebuild the project from scratch.
+
+Preserve existing working mechanics, architecture, assets, and game identity wherever possible. Improve the underlying simulation systems, NPC behavior, world interactions, progression, and multiplayer experience.
+
+The objective is to create a living world where villagers gradually develop intelligence, relationships, knowledge, survival capabilities, culture, and social structures.
+
+## CORE DESIGN PHILOSOPHY
+
+The world must obey consistent rules.
+
+- NPCs must not magically create resources, buildings, knowledge, or population.
+- NPCs must have limitations based on their current knowledge, skills, experience, personality, and available resources.
+- Relationships must develop through actual interactions and experiences.
+- Civilization must progress gradually.
+- The environment must physically affect NPC decisions.
+- Social behavior must have consequences.
+- Every significant event must have a valid simulation cause.
+- AI decisions must be explainable and inspectable.
+- Every system must be modular, maintainable, and testable.
+
+---
+
+# PHASE 0 — CODEBASE AUDIT, ARCHITECTURE AND GIT PREPARATION
+
+Before modifying anything, inspect the existing Earthdale project thoroughly.
+
+Identify:
+
+1. Game engine and framework.
+2. Project structure and existing modules.
+3. NPC architecture and decision-making.
+4. Movement, collision, and pathfinding.
+5. Resource gathering and inventory.
+6. Construction and building systems.
+7. Animal implementation.
+8. Existing social and relationship mechanics.
+9. World simulation and time progression.
+10. Population and migration systems.
+11. Multiplayer architecture and synchronization.
+12. Earthdale Ledger interface and event history.
+13. Existing testing infrastructure.
+
+Identify existing bugs, duplicated logic, tightly coupled systems, and opportunities for improvement.
+
+Do not invent new implementations before understanding the existing ones.
+
+## Git branch preparation
+
+Create a dedicated branch:
+
+`feature/npc-social-simulation-sandbox`
+
+This branch is for experimental NPC interactions, cognitive development, social behavior, and simulation testing.
+
+Requirements:
+
+- Inspect the current Git status.
+- Preserve all uncommitted changes.
+- Never discard or overwrite existing work.
+- Create the branch from the appropriate current development baseline.
+- Keep the main branch untouched.
+- Do not commit unrelated changes.
+- Document important architectural decisions.
+
+If branch creation would risk existing work, stop and explain the issue.
+
+## Dedicated Earthdale simulation testing environment
+
+Create a separate flat testing environment or sandbox scene.
+
+It should contain:
+
+- Flat walkable terrain.
+- Test villagers with different personalities.
+- Trees, twigs, stones, and other resources.
+- A small body of water with different depth levels.
+- Basic shelters and construction materials.
+- Test animals.
+- Enough space for NPC movement and social interaction.
+
+Include developer tools to inspect:
+
+- NPC current activity.
+- Current needs.
+- Current goal.
+- Current decision.
+- Relationship values.
+- Knowledge and skills.
+- Inventory.
+- Resource quantities.
+- Current path and destination.
+- Movement and collision state.
+- Recent memories.
+- Social events.
+
+Provide configurable simulation duration, population, and initial resources.
+
+The sandbox must be independent of the actual Earthdale game world.
+
+---
+
+# PHASE 1 — NPC COGNITION AND INTELLIGENCE
+
+## 1.1 Individual identity
+
+Every villager should have persistent characteristics:
+
+- Personality.
+- Interests.
+- Preferences.
+- Needs.
+- Emotions.
+- Skills.
+- Knowledge.
+- Memories.
+- Relationships.
+- Reputation.
+- Personal goals.
+- Experiences.
+
+Different villagers must behave differently even when placed in identical situations.
+
+Examples:
+
+- Outgoing villagers initiate conversations more often.
+- Cautious villagers avoid dangerous environments.
+- Curious villagers explore unfamiliar surroundings.
+- Hardworking villagers prioritize productive activities.
+- Selfish villagers may avoid sharing resources.
+- Helpful villagers may assist others more frequently.
+
+Personality should influence behavior without completely controlling it.
+
+## 1.2 Cognitive development and learning
+
+Slow down cognitive development significantly.
+
+NPCs should not immediately possess advanced knowledge or understand every available activity.
+
+Introduce progressive knowledge categories:
+
+- Survival.
+- Resource gathering.
+- Tool usage.
+- Construction.
+- Agriculture.
+- Animal handling.
+- Exploration.
+- Social organization.
+- Leadership.
+- Governance.
+
+Knowledge must be acquired through:
+
+1. Personal experience.
+2. Repeated activities.
+3. Observation.
+4. Experimentation.
+5. Teaching.
+6. Cooperation.
+7. Interaction with knowledgeable villagers.
+
+For example, a newly arrived villager should not automatically know how to construct an advanced house.
+
+They may initially understand basic shelter construction and gradually discover improved techniques.
+
+Knowledge should persist across sessions and remain attached to the individual.
+
+Where appropriate, knowledge may also spread between villagers through teaching and observation.
+
+## 1.3 Decision-making architecture
+
+Implement a modular hybrid AI architecture.
+
+Consider combining:
+
+- Utility-based decision-making.
+- Behavior trees or finite-state machines.
+- Short-term planning.
+- Long-term goals.
+- Persistent memory.
+- Relationship and personality modifiers.
+- Environmental awareness.
+
+Avoid excessive randomness and repetitive behavior.
+
+NPCs should evaluate:
+
+- Immediate needs.
+- Available resources.
+- Current surroundings.
+- Possible dangers.
+- Personal capabilities.
+- Existing knowledge.
+- Social relationships.
+- Community needs.
+- Long-term objectives.
+
+NPCs must not possess unlimited knowledge of the world. They should make decisions using information they have observed, learned, or remembered.
+
+Separate decision-making from action execution.
+
+An NPC may request an action, but the simulation must validate its requirements before executing it.
+
+For performance, avoid running expensive decision calculations every frame. Use appropriate simulation ticks, scheduled evaluations, and event-driven updates.
+
+---
+
+# PHASE 2 — SOCIAL INTERACTIONS AND RELATIONSHIPS
+
+Social development should be one of the central systems of Earthdale.
+
+Villagers must become a community, not just independent workers.
+
+## 2.1 Relationship progression
+
+Introduce persistent relationships between villagers.
+
+Suggested stages:
+
+- Stranger.
+- Acquaintance.
+- Familiar.
+- Friend.
+- Close Friend.
+- Rival.
+- Enemy.
+
+Relationships must be dynamic.
+
+They should improve or deteriorate through actual experiences.
+
+Factors include:
+
+- Conversation frequency.
+- Positive interactions.
+- Negative interactions.
+- Shared activities.
+- Cooperation.
+- Resource sharing.
+- Trustworthiness.
+- Personality compatibility.
+- Betrayal.
+- Arguments.
+- Assistance during difficult situations.
+- Repeated social neglect.
+
+A single conversation must not automatically establish a friendship.
+
+Relationship stages should use configurable thresholds and contextual requirements.
+
+## 2.2 Social interaction capabilities
+
+Implement autonomous interactions such as:
+
+**Introduction and communication**
+- Introducing themselves.
+- Greeting.
+- Starting conversations.
+- Discussing village activities.
+- Sharing experiences.
+- Asking questions.
+- Exchanging information.
+
+**Positive interactions**
+- Helping others.
+- Sharing food.
+- Sharing resources.
+- Giving gifts.
+- Teaching skills.
+- Inviting others to work.
+- Celebrating achievements.
+- Developing friendships.
+
+**Negative interactions**
+- Disagreements.
+- Arguments.
+- Insults.
+- Accusations.
+- Gossip.
+- Betrayal.
+- Stealing.
+- Refusing assistance.
+- Developing rivalries.
+
+**Community interactions**
+- Group conversations.
+- Collaborative work.
+- Community gatherings.
+- Discussions about village problems.
+- Collective decisions.
+- Conflict resolution.
+
+Interactions must have contextual requirements.
+
+For example, villagers should not continuously attempt conversations with someone who is busy, hostile, sleeping, or unwilling to interact.
+
+## 2.3 Social memory and consequences
+
+NPCs must remember meaningful experiences.
+
+Examples:
+
+- A villager remembers who helped them during a difficult situation.
+- A villager remembers being robbed.
+- A villager remembers who taught them a skill.
+- A villager remembers previous arguments.
+- A villager remembers positive experiences with friends.
+
+Memories should influence future decisions and relationships.
+
+Avoid making every minor action a permanent memory. Prioritize significant experiences and use appropriate memory retention and retrieval mechanisms.
+
+---
+
+# PHASE 3 — EARTHDALE SOCIAL LOG
+
+Implement a **Social Log** within the existing Earthdale Ledger interface.
+
+Its purpose is to display actual interactions and significant community events.
+
+Example entries:
+
+- Villager A introduced themselves to Villager B.
+- Villager C and Villager D had their first conversation.
+- Villager A and Villager B became acquaintances.
+- Villager C formed a friendship with Villager D.
+- Villager B shared food with Villager A.
+- Villager D taught Villager C how to gather wood.
+- Villager A and Villager C had a disagreement.
+- Villager B gained the trust of the community.
+- Villager C was accused of stealing resources.
+- The village decided to banish Villager D.
+- A group of travelers arrived by boat.
+
+## Social Log functionality
+
+Each event should contain:
+
+- Simulation timestamp.
+- Event title.
+- Involved villagers.
+- Event category.
+- Description.
+- Event significance.
+- Relevant relationship changes.
+- Related village consequences.
+
+Suggested categories:
+
+- Introductions.
+- Conversations.
+- Friendships.
+- Family.
+- Cooperation.
+- Conflicts.
+- Reputation.
+- Governance.
+- Migration.
+- Construction.
+- Learning.
+
+## Interface requirements
+
+- Integrate with the existing Earthdale Ledger UI.
+- Display recent events first.
+- Support historical event browsing.
+- Include category filters.
+- Allow users to inspect involved villagers.
+- Use readable descriptions.
+- Distinguish ordinary events from major milestones.
+- Avoid excessive repetitive notifications.
+
+The Social Log must be generated from confirmed simulation events.
+
+Never fabricate events to make the log appear active.
+
+Use a centralized event system so other modules can publish meaningful events without directly depending on the Social Log interface.
+
+---
+
+# PHASE 4 — RESOURCE ECONOMY AND DEPLETION
+
+Resources must have actual quantities.
+
+Gathering must consume resources, and depleted resources must become unavailable.
+
+## Example initial resource quantities
+
+| Resource | Example quantity |
+|---|---:|
+| Twig | 5 wood |
+| Small tree | 10 wood |
+| Medium tree | 12 wood |
+| Large tree | 15 wood |
+
+These are example balancing values. Make them configurable rather than hardcoding them throughout the project.
+
+## Resource mechanics
+
+- Every resource node has a quantity.
+- Gathering decreases the quantity.
+- Gathering cannot exceed the available quantity.
+- Depleted nodes cannot provide more resources.
+- Resource nodes should visually reflect depletion where supported.
+- Resources must be transferred into NPC inventories or storage.
+- Gathering requires time and appropriate tools where applicable.
+- Resource gathering should account for distance and efficiency.
+- Regeneration must follow defined rules.
+- Renewable and nonrenewable resources must behave differently.
+
+NPCs must recognize when an area is depleted.
+
+They should consider:
+
+- Exploring other areas.
+- Conserving resources.
+- Using alternative materials.
+- Sharing available resources.
+- Prioritizing essential construction.
+
+Do not automatically replenish depleted resources.
+
+Resource availability must influence the entire village economy.
+
+---
+
+# PHASE 5 — CONSTRUCTION AND BUILDING PROGRESSION
+
+Buildings must be constructed through actual stages.
+
+They must not magically appear.
+
+## 5.1 Construction lifecycle
+
+Every building should follow a legitimate process:
+
+1. Identify a need for a building.
+2. Determine an appropriate building type.
+3. Check construction knowledge.
+4. Check available materials.
+5. Select a suitable location.
+6. Gather materials.
+7. Prepare the construction site.
+8. Begin construction.
+9. Progress through construction stages.
+10. Complete the building.
+11. Make the building available for use.
+
+Buildings should visibly progress during construction.
+
+Suggested visual stages:
+
+- Foundation.
+- Framework.
+- Walls.
+- Roof.
+- Completed structure.
+
+Use the existing rendering capabilities and assets where possible.
+
+If materials are depleted, construction must pause.
+
+If the NPC lacks the required knowledge, it must not construct the building.
+
+## 5.2 Housing knowledge progression
+
+Villagers should initially know only basic construction techniques.
+
+Suggested progression:
+
+**Stage 1 — Primitive Shelter**
+- Tents.
+- Temporary shelters.
+- Basic protection.
+
+**Stage 2 — Basic Shelter**
+- Wooden huts.
+- Simple permanent shelters.
+- Basic construction methods.
+
+**Stage 3 — Improved Housing**
+- Larger wooden houses.
+- Improved structural designs.
+- Better material utilization.
+
+**Stage 4 — Advanced Housing**
+- Complex houses.
+- Improved construction techniques.
+- Greater comfort and capacity.
+
+Progression must be based on learning and experience, not simply elapsed time.
+
+NPCs may discover construction methods, learn from others, and pass knowledge to future villagers.
+
+## 5.3 Population-based construction decisions
+
+Fix the issue where two villagers construct four houses without a legitimate population requirement.
+
+Introduce:
+
+- Current population.
+- Existing housing capacity.
+- Occupancy.
+- Available beds.
+- Housing conditions.
+- Expected population growth.
+- Construction costs.
+- Material availability.
+
+A village with two villagers should generally prioritize meeting its actual housing needs instead of building unnecessary houses.
+
+Construction decisions must consider shared community needs.
+
+Prevent duplicate construction requests and multiple NPCs attempting to build the same structure unnecessarily.
+
+---
+
+# PHASE 6 — NAVIGATION, COLLISION AND ENVIRONMENTAL AWARENESS
+
+## 6.1 Water and terrain traversal
+
+Deep water must be impassable to villagers who do not possess the appropriate traversal capability.
+
+Differentiate:
+
+- Walkable land.
+- Shallow water.
+- Deep water.
+- Dangerous terrain.
+- Obstacles.
+- Bridges.
+- Valid crossing points.
+
+NPC pathfinding must consider terrain and water depth.
+
+If the destination is across deep water, NPCs should:
+
+1. Search for an appropriate crossing.
+2. Find an alternative route.
+3. Use a boat if available and capable.
+4. Postpone or abandon the task if no valid route exists.
+
+Do not allow NPCs to walk directly through deep water because a geometrically shorter path exists.
+
+## 6.2 Movement and collision improvements
+
+Fix the existing problem where NPCs become stuck near objects or uncontrollably move when close to other entities.
+
+Investigate:
+
+- Collision detection.
+- Navigation meshes.
+- Pathfinding.
+- Entity avoidance.
+- Movement steering.
+- Target positioning.
+- Animation synchronization.
+- Repeated path recalculation.
+- Collision resolution.
+
+Implement:
+
+- Local obstacle avoidance.
+- NPC separation.
+- Valid interaction distances.
+- Stuck detection.
+- Movement timeouts.
+- Path recalculation.
+- Recovery behavior.
+- Prevention of infinite movement loops.
+
+When villagers approach one another, they must find appropriate interaction positions without overlapping, pushing each other indefinitely, or repeatedly changing destinations.
+
+Apply relevant fixes to animals and other moving entities.
+
+---
+
+# PHASE 7 — ANIMAL INTELLIGENCE AND ECOSYSTEM
+
+Improve animals so they behave like living creatures rather than decorative moving objects.
+
+Implement species-specific behaviors based on the existing animal types.
+
+Possible behaviors:
+
+- Wandering.
+- Grazing.
+- Drinking.
+- Resting.
+- Sleeping.
+- Searching for food.
+- Fleeing from threats.
+- Avoiding dangerous areas.
+- Reacting to villagers.
+- Interacting with other animals.
+- Reproduction where appropriate.
+
+Animal behavior should be influenced by:
+
+- Hunger.
+- Energy.
+- Safety.
+- Food availability.
+- Nearby threats.
+- Environment.
+- Species characteristics.
+
+Different species must have different behavior patterns.
+
+Animals should obey the same appropriate movement, collision, and terrain restrictions as other entities.
+
+Do not implement unrealistic behaviors merely to make the world look busy.
+
+---
+
+# PHASE 8 — MIGRATION AND EXTERNAL POPULATION
+
+New villagers must not randomly appear on an island.
+
+Introduce a proper migration system.
+
+Possible arrival types:
+
+- Individual travelers.
+- Migrating families.
+- Small groups.
+- Traders.
+- Explorers.
+- Refugees.
+
+For island settlements, boats should be the primary arrival method when appropriate.
+
+## Migration sequence
+
+1. An external group decides to travel.
+2. The group has a legitimate origin.
+3. A destination is selected.
+4. Transportation is arranged.
+5. The group travels toward the settlement.
+6. The boat physically reaches a valid landing location.
+7. Villagers disembark.
+8. Existing villagers notice the newcomers.
+9. Introductions and social interactions become possible.
+10. New arrivals decide whether to remain, leave, or seek assistance.
+
+Migration decisions should consider:
+
+- Settlement reputation.
+- Available food.
+- Housing capacity.
+- Safety.
+- Resources.
+- Population.
+- Environmental conditions.
+- Travel distance.
+- Transportation availability.
+
+Newcomers should not automatically join the village.
+
+They should have their own motivations and may decide to leave if conditions are unsuitable.
+
+Do not spawn transportation or external groups without a legitimate simulation event.
+
+---
+
+# PHASE 9 — VILLAGE GOVERNANCE, REPUTATION AND BANISHMENT
+
+Introduce an emerging community governance system.
+
+Villagers should gradually establish social expectations, values, and community rules.
+
+Governance should develop through actual social circumstances rather than appearing fully formed at the beginning.
+
+## 9.1 Reputation and community standing
+
+NPCs should develop reputations based on their behavior.
+
+Positive contributions:
+
+- Helping villagers.
+- Sharing resources.
+- Protecting the community.
+- Teaching skills.
+- Participating in construction.
+- Resolving disputes.
+- Contributing to survival.
+
+Negative behaviors:
+
+- Stealing.
+- Repeated aggression.
+- Resource hoarding.
+- Betrayal.
+- Sabotage.
+- Repeatedly violating community rules.
+- Harming other villagers.
+
+Reputation should be individual and contextual.
+
+Not every villager must agree on someone's character.
+
+A villager who is considered trustworthy by one person may be disliked by another because of conflicting experiences or interests.
+
+## 9.2 Community rules
+
+As the settlement develops, villagers may establish informal or formal rules.
+
+Examples:
+
+- Sharing food during shortages.
+- Respecting private storage.
+- Prohibiting theft.
+- Contributing to community construction.
+- Protecting vulnerable villagers.
+- Punishing repeated aggression.
+
+Rules should emerge according to the settlement's development and social organization.
+
+Different villages may develop different expectations.
+
+## 9.3 Disputes and collective decisions
+
+When serious conflicts occur, villagers may:
+
+- Confront the individual.
+- Complain to other villagers.
+- Discuss the incident.
+- Defend the accused.
+- Demand compensation.
+- Attempt reconciliation.
+- Establish community restrictions.
+- Eventually consider banishment.
+
+Collective decisions must account for individual opinions, relationships, evidence, reputation, and the severity of the incident.
+
+Do not make every villager automatically agree.
+
+## 9.4 Banishment mechanics
+
+Villagers must have the ability to collectively decide to banish another villager under appropriate circumstances.
+
+Banishment should be a significant social event, not a random punishment.
+
+Possible reasons:
+
+- Repeated theft.
+- Violence against other villagers.
+- Betrayal.
+- Sabotage.
+- Persistent harmful behavior.
+- Repeated violation of established community rules.
+- Serious damage to community trust.
+
+### Banishment process
+
+1. An incident occurs.
+2. Affected villagers remember the incident.
+3. Information spreads through direct observation, conversations, or trustworthy reports.
+4. Villagers form individual opinions.
+5. Concerned villagers may confront the individual.
+6. Conflicts may escalate or be resolved.
+7. A community discussion or decision process may begin.
+8. Villagers evaluate whether the behavior warrants punishment.
+9. A collective decision is reached according to the village's governance system.
+10. If banishment is approved, the target receives the appropriate consequences.
+11. The target physically leaves the settlement.
+12. The event is recorded in the Earthdale Social Log.
+
+### Important decision rules
+
+- A single accusation must not automatically result in banishment.
+- Rumors must not be treated as confirmed facts.
+- Villagers must distinguish between witnessed events and secondhand information.
+- Personal relationships may influence opinions.
+- Some villagers may defend the accused.
+- Some villagers may oppose banishment.
+- Serious incidents should carry more weight than minor disagreements.
+- The accused should have an opportunity to respond or attempt reconciliation where appropriate.
+- The community must have legitimate reasons and sufficient social development to make such decisions.
+
+### After banishment
+
+A banished villager should not simply disappear.
+
+They may:
+
+- Travel elsewhere.
+- Seek another settlement.
+- Become a wandering individual.
+- Attempt to establish a new settlement if the simulation supports it.
+- Seek assistance from another community.
+
+Their relationships with former villagers should persist.
+
+The banishment should have consequences for both parties.
+
+For example:
+
+- Former friends may become upset.
+- Some villagers may feel safer.
+- Others may lose trust in the community.
+- The banished individual may develop resentment.
+- The village may experience a change in reputation.
+
+The event must be recorded in the Earthdale Social Log with the reason, participants, and outcome.
+
+---
+
+# PHASE 10 — MULTIPLAYER SIMULATION BALANCING
+
+Multiplayer must preserve the simulation's natural progression.
+
+## 10.1 Remove multiplayer speedup controls
+
+Do not include time-speedup buttons or controls in multiplayer.
+
+Players should not be able to independently accelerate the shared simulation.
+
+The world must operate on a consistent synchronized simulation clock.
+
+## 10.2 Balance progression without speed controls
+
+Because multiplayer does not have speedup functionality, optimize progression so players remain engaged.
+
+Do this through:
+
+- More efficient NPC task scheduling.
+- Better distribution of community responsibilities.
+- Reduced unnecessary idle time.
+- More meaningful simultaneous activities.
+- Appropriate resource availability.
+- Balanced construction durations.
+- More responsive social interactions.
+- Properly tuned learning rates.
+
+Do not simply make all systems excessively fast.
+
+Preserve the slower cognitive development and meaningful civilization progression.
+
+The goal is to make multiplayer engaging without sacrificing simulation realism.
+
+## 10.3 Synchronization
+
+Ensure that:
+
+- NPC positions are synchronized.
+- Relationship changes are synchronized.
+- Construction stages are synchronized.
+- Resource quantities are authoritative.
+- Migration events are consistent.
+- Social Log entries are not duplicated.
+- Governance decisions are consistent.
+- Simulation time is controlled by the shared world state.
+
+Prevent multiple clients from independently executing the same NPC action.
+
+Use the existing authoritative multiplayer architecture where possible.
+
+---
+
+# PHASE 11 — MODULAR SYSTEM ARCHITECTURE
+
+Do not implement everything in one enormous NPC controller.
+
+Organize the implementation into independent modules with clear responsibilities.
+
+Suggested logical modules:
+
+| Module | Responsibility |
+|---|---|
+| NPC Cognition | Decision-making, learning, memory |
+| NPC Personality | Individual traits and preferences |
+| NPC Needs | Hunger, energy, safety and social needs |
+| NPC Memory | Experiences and memory retrieval |
+| NPC Social | Relationships and interactions |
+| Social Events | Confirmed event generation |
+| Resource System | Gathering, depletion and regeneration |
+| Inventory | Carrying and storing resources |
+| Construction | Building stages and requirements |
+| Knowledge System | Learning and skill progression |
+| Navigation | Pathfinding and movement |
+| Environment | Terrain, water and hazards |
+| Animal AI | Wildlife behavior |
+| Migration | External arrivals and travel |
+| Governance | Rules, reputation and banishment |
+| Earthdale Ledger | Historical records and Social Log |
+| Multiplayer | Shared simulation state |
+
+These are logical responsibilities, not mandatory filenames.
+
+Adapt them to the existing project structure.
+
+## Architecture requirements
+
+- Minimize circular dependencies.
+- Avoid duplicated state.
+- Use centralized event communication where appropriate.
+- Keep simulation logic separate from UI.
+- Keep decision-making separate from movement execution.
+- Keep resource validation separate from NPC intentions.
+- Use clear interfaces between systems.
+- Make important parameters configurable.
+- Ensure state persistence where necessary.
+- Avoid unnecessary abstraction and overengineering.
+
+---
+
+# PHASE 12 — RESEARCH AND DESIGN REFERENCES
+
+Before implementing major systems, investigate how established simulation games handle similar mechanics.
+
+Study:
+
+**The Sims**
+- Autonomous NPC behavior.
+- Social interactions.
+- Relationship progression.
+- Personality and preferences.
+- Memory and sentiments.
+- Neighborhood Stories.
+- Autonomous life events.
+- Interaction prioritization.
+- Prevention of repetitive or inappropriate autonomy.
+
+Research official developer materials, GDC presentations, technical articles, and relevant documentation.
+
+**Generative Agents research**
+
+Study:
+
+Park et al. (2023), "Generative Agents: Interactive Simulacra of Human Behavior."
+
+https://arxiv.org/abs/2304.03442
+
+Pay particular attention to:
+
+- Memory streams.
+- Observation.
+- Memory retrieval.
+- Reflection.
+- Planning.
+- Emergent social interactions.
+
+Use these works as architectural inspiration, not as instructions to introduce expensive language-model calls for every NPC action.
+
+Prefer efficient deterministic or utility-based simulation for routine gameplay. More sophisticated reasoning should be used only where it provides meaningful value.
+
+Investigate other relevant simulation games and open-source implementations where useful.
+
+Do not copy proprietary game code or assets.
+
+Document which design principles are being adopted and why.
+
+---
+
+# PHASE 13 — TESTING AND VALIDATION
+
+Create test scenarios in the dedicated Earthdale sandbox.
+
+Do not consider a feature complete merely because the code compiles.
+
+## Required test scenarios
+
+### Scenario A — Small population
+
+- Start with two villagers.
+- Observe their survival behavior.
+- Verify that they do not construct unnecessary houses.
+- Verify that they develop relationships naturally.
+
+### Scenario B — Social development
+
+- Introduce multiple villagers.
+- Observe introductions and conversations.
+- Verify gradual relationship progression.
+- Verify that the Social Log records actual events.
+
+### Scenario C — Resource depletion
+
+- Place a small number of trees and twigs.
+- Allow villagers to gather resources.
+- Verify that quantities decrease correctly.
+- Verify that depleted nodes cannot be harvested.
+
+### Scenario D — Construction progression
+
+- Start villagers with basic knowledge.
+- Verify that they can construct primitive shelters.
+- Verify that advanced structures remain unavailable until learned.
+- Verify that construction consumes resources and progresses through stages.
+
+### Scenario E — Deep water
+
+- Place a destination across deep water.
+- Verify that villagers cannot walk directly through it.
+- Verify that they seek a valid route or abandon the task.
+
+### Scenario F — Collision and navigation
+
+- Place several villagers close together.
+- Introduce nearby obstacles.
+- Verify that they do not overlap, spin uncontrollably, or remain permanently stuck.
+
+### Scenario G — Animal behavior
+
+- Introduce multiple animal types.
+- Observe their movement, feeding, resting, and threat responses.
+- Verify that they obey navigation restrictions.
+
+### Scenario H — Migration
+
+- Simulate an external group approaching an island.
+- Verify that they arrive by boat.
+- Verify that they physically disembark.
+- Verify that they interact with the existing population.
+
+### Scenario I — Governance and banishment
+
+- Introduce a villager who repeatedly violates community rules.
+- Allow other villagers to observe or learn about the incidents.
+- Verify that opinions develop individually.
+- Verify that collective decisions are not automatic.
+- Verify that approved banishment causes the villager to leave physically.
+- Verify that the event is recorded.
+
+### Scenario J — Multiplayer
+
+- Run the simulation with multiple clients.
+- Verify that no speedup controls are available.
+- Verify synchronized NPC behavior, construction, resources, and social events.
+- Verify that duplicate actions and event records do not occur.
+
+## Testing requirements
+
+- Test edge cases.
+- Test prolonged simulation sessions.
+- Test save and load persistence.
+- Test performance with increasing population.
+- Test repeated interactions.
+- Test resource exhaustion.
+- Test invalid movement destinations.
+- Test simultaneous construction requests.
+- Test conflicting NPC decisions.
+
+Provide test results and identify remaining limitations.
+
+---
+
+# PHASE 14 — IMPLEMENTATION ORDER AND DEVELOPMENT DISCIPLINE
+
+Do not attempt to implement every feature in one massive change.
+
+Work systematically.
+
+Follow this order:
+
+**Milestone 1 — Audit and Sandbox**
+- Inspect the codebase.
+- Prepare the Git branch.
+- Create the testing environment.
+- Document existing systems and bugs.
+
+**Milestone 2 — Simulation Stability**
+- Fix movement and collision.
+- Improve pathfinding.
+- Add terrain and water restrictions.
+- Stabilize NPC action execution.
+
+**Milestone 3 — Core NPC Intelligence**
+- Implement personality.
+- Improve decision-making.
+- Add needs and persistent memory.
+- Introduce gradual learning.
+
+**Milestone 4 — Social Simulation**
+- Implement relationships.
+- Add autonomous interactions.
+- Add social memory.
+- Implement the Earthdale Social Log.
+
+**Milestone 5 — Resource and Construction**
+- Add finite resource quantities.
+- Improve inventory handling.
+- Add construction stages.
+- Implement housing and building knowledge progression.
+- Fix population-based construction decisions.
+
+**Milestone 6 — Animals and Migration**
+- Improve animal intelligence.
+- Implement physical migration and boat arrivals.
+
+**Milestone 7 — Governance**
+- Add reputation.
+- Introduce community rules.
+- Implement disputes and banishment.
+
+**Milestone 8 — Multiplayer**
+- Remove speedup controls.
+- Balance progression.
+- Validate synchronization.
+
+**Milestone 9 — Optimization and Integration**
+- Profile performance.
+- Fix regressions.
+- Test long-running simulations.
+- Integrate modules.
+- Document the final architecture.
+
+You may adjust this order when the existing architecture requires a different dependency sequence, but explain the reason.
+
+---
+
+# FINAL IMPLEMENTATION RULES
+
+1. Inspect before modifying.
+2. Preserve existing working features.
+3. Never silently remove existing functionality.
+4. Never fabricate completed functionality.
+5. Never replace working systems without a demonstrated reason.
+6. Do not introduce unnecessary dependencies.
+7. Do not hardcode progression values throughout the project.
+8. Keep systems modular.
+9. Maintain compatibility with the existing save system.
+10. Consider performance as population increases.
+11. Validate all NPC actions against the actual world state.
+12. Ensure every Social Log event corresponds to a real event.
+13. Test every major change in the sandbox.
+14. Document incomplete functionality honestly.
+15. Never claim a feature is implemented without testing it.
+
+## EXPECTED DELIVERABLES
+
+At the end of the development process, provide:
+
+1. Codebase audit and architecture assessment.
+2. Git branch confirmation.
+3. Dedicated NPC testing environment.
+4. Implemented and tested modules.
+5. Updated Earthdale Social Log.
+6. Improved NPC decision-making and learning.
+7. Improved social interactions and relationships.
+8. Realistic resource depletion.
+9. Progressive construction and housing.
+10. Improved navigation and collision.
+11. Improved animal behavior.
+12. Physical migration and arrival mechanics.
+13. Reputation, governance, and banishment.
+14. Multiplayer progression and synchronization improvements.
+15. Test results.
+16. Known bugs and limitations.
+17. Files changed and reasons for each change.
+18. Recommended next development steps.
+
+## EXECUTION INSTRUCTION
+
+Begin with PHASE 0 only.
+
+First inspect the existing Earthdale codebase, understand the current implementation, and prepare the testing branch safely.
+
+Do not immediately rewrite or implement all systems.
+
+After the audit, present:
+
+- Existing architecture.
+- Current problems.
+- Reusable systems.
+- Missing systems.
+- Dependencies between proposed modules.
+- Recommended implementation sequence.
+
+Then proceed incrementally, implementing and testing each milestone before moving to the next.
+
+The ultimate objective is a believable living civilization simulation where villagers do not simply execute predefined tasks, but gradually develop their own society through experience, learning, relationships, cooperation, conflict, and adaptation.

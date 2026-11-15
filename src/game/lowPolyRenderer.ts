@@ -30,6 +30,18 @@ import {
   createWildNodeGroup,
 } from './lowPolyModels';
 import {
+  attachFoliageEnvironmentShader,
+  attachSkySeaSurfaceShader,
+  computeAnchoredSunPosition,
+  computeWaveDisplacement,
+  computeWindState,
+  createInteractorArray,
+  packActorFoliageInteractors,
+  type FoliageShaderUniforms,
+  type WaterShaderUniforms,
+  type WindSample,
+} from './environmentFx';
+import {
   buildArchipelagoFoliageScatter,
   buildArchipelagoLandmarks,
   buildFloatingIslandGeometry,
@@ -313,7 +325,21 @@ export class LowPolyDioramaRenderer {
   private flowerBloomMesh: THREE.InstancedMesh;
   private fernMesh: THREE.InstancedMesh;
   private scatterKey = '';
-  private windUniform = { value: 0 };
+  private foliageUniforms: FoliageShaderUniforms = {
+    uWindTime: { value: 0 },
+    uWindDir: { value: new THREE.Vector2(1, 0.3) },
+    uWindStrength: { value: 1 },
+    uCloudShadow: { value: 0.55 },
+    uInteractors: { value: createInteractorArray() },
+  };
+  private waterUniforms: WaterShaderUniforms = {
+    uWaveTime: { value: 0 },
+    uWindDir: { value: new THREE.Vector2(1, 0.3) },
+    uWaveAmp: { value: 0.06 },
+    uNightFactor: { value: 0 },
+    uFoamTint: { value: new THREE.Color(0xeef9ff) },
+  };
+  private actorSpeedMap = new Map<string, number>();
 
   private contactShadowTex: THREE.CanvasTexture;
   private contactShadowMat: THREE.MeshBasicMaterial;
@@ -485,6 +511,7 @@ export class LowPolyDioramaRenderer {
       transparent: true,
       opacity: 0.9,
     });
+    attachSkySeaSurfaceShader(this.waterMat, this.waterUniforms);
     this.waterMesh = new THREE.Mesh(waterGeom, this.waterMat);
     this.waterMesh.receiveShadow = true;
     this.scene.add(this.waterMesh);
@@ -544,30 +571,17 @@ export class LowPolyDioramaRenderer {
     this.scene.add(this.peerMarkersGroup);
     this.scene.add(this.debugCollisionsGroup);
 
-    // Instanced Archipelago Foliage with GPU Wind Sway
+    // Instanced Archipelago Foliage with GPU Wind Sway, Actor Parting & Cloud Dapple
     const scatter = buildArchipelagoFoliageScatter();
-    const attachWindSway = (mat: THREE.MeshStandardMaterial, amp: number) => {
-      mat.onBeforeCompile = (shader) => {
-        shader.uniforms.uWindTime = this.windUniform;
-        shader.vertexShader = `uniform float uWindTime;\n${shader.vertexShader}`.replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           float hFactor = max(0.0, position.y);
-           float phase = uWindTime * 2.0 + instanceMatrix[3][0] * 0.85 + instanceMatrix[3][2] * 0.55;
-           transformed.x += sin(phase) * ${amp.toFixed(3)} * hFactor;
-           transformed.z += cos(phase * 0.75) * ${(amp * 0.45).toFixed(3)} * hFactor;`,
-        );
-      };
-    };
 
     const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.84 });
-    attachWindSway(grassMat, 0.16);
+    attachFoliageEnvironmentShader(grassMat, this.foliageUniforms, 0.17);
     this.grassMesh = new THREE.InstancedMesh(createGrassTuftGeometry(), grassMat, Math.max(1, scatter.grassTufts.length));
     this.grassMesh.receiveShadow = true;
     this.scene.add(this.grassMesh);
 
     const flowerStemMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.82 });
-    attachWindSway(flowerStemMat, 0.13);
+    attachFoliageEnvironmentShader(flowerStemMat, this.foliageUniforms, 0.13);
     this.flowerStemMesh = new THREE.InstancedMesh(
       createFlowerStemGeometry(),
       flowerStemMat,
@@ -576,7 +590,7 @@ export class LowPolyDioramaRenderer {
     this.scene.add(this.flowerStemMesh);
 
     const flowerBloomMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.65 });
-    attachWindSway(flowerBloomMat, 0.13);
+    attachFoliageEnvironmentShader(flowerBloomMat, this.foliageUniforms, 0.13);
     this.flowerBloomMesh = new THREE.InstancedMesh(
       createFlowerBloomGeometry(),
       flowerBloomMat,
@@ -585,7 +599,7 @@ export class LowPolyDioramaRenderer {
     this.scene.add(this.flowerBloomMesh);
 
     const fernMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.8 });
-    attachWindSway(fernMat, 0.11);
+    attachFoliageEnvironmentShader(fernMat, this.foliageUniforms, 0.12);
     this.fernMesh = new THREE.InstancedMesh(createFernBushGeometry(), fernMat, Math.max(1, scatter.ferns.length));
     this.fernMesh.receiveShadow = true;
     this.scene.add(this.fernMesh);
@@ -985,15 +999,17 @@ export class LowPolyDioramaRenderer {
     if (this.projectileMesh.instanceColor) this.projectileMesh.instanceColor.needsUpdate = true;
   }
 
-  private syncWildNodes(world: WorldState) {
+  private syncWildNodes(world: WorldState, wind: WindSample, animTimeSec: number) {
     const activeIds = new Set<string>();
     const { season, weather } = world.environment;
+    const interactors = this.foliageUniforms.uInteractors.value;
 
     for (const node of world.wildNodes) {
+      if (node.amount <= 0.05) continue;
       activeIds.add(node.id);
       const hasStock = node.amount > 2 ? 1 : 0;
       const key = `${node.kind}_${hasStock}_${season}_${weather}`;
-      const entry = this.wildNodeCache.get(node.id);
+      let entry = this.wildNodeCache.get(node.id);
       if (!entry || entry.key !== key) {
         if (entry) {
           this.wildNodesGroup.remove(entry.group);
@@ -1004,7 +1020,52 @@ export class LowPolyDioramaRenderer {
         group.userData.entityId = node.id;
         group.position.set(toWorldX(node.x), groundHeightAtSim(node.x, node.y), toWorldZ(node.y));
         this.wildNodesGroup.add(group);
-        this.wildNodeCache.set(node.id, { key, group });
+        entry = { key, group };
+        this.wildNodeCache.set(node.id, entry);
+      }
+
+      const wx = entry.group.position.x;
+      const wz = entry.group.position.z;
+      const canopy = entry.group.userData.canopyPivot as THREE.Object3D | undefined;
+      if (canopy) {
+        const gustWave = 0.65 + 0.35 * Math.sin(animTimeSec * 1.6 + wx * 0.18 + wz * 0.14);
+        const micro = Math.sin(animTimeSec * 2.4 + wx * 0.65 + wz * 0.45) * 0.018 * wind.gust;
+        let rustle = 0;
+        for (let i = 0; i < interactors.length; i++) {
+          const slot = interactors[i];
+          if (slot.w <= 0.02) continue;
+          const dx = wx - slot.x;
+          const dz = wz - slot.y;
+          const distSq = dx * dx + dz * dz;
+          const maxR = slot.z + 0.9;
+          if (distSq < maxR * maxR) {
+            const strength = (1 - Math.sqrt(distSq) / maxR) * slot.w;
+            if (strength > rustle) rustle = strength;
+          }
+        }
+        const rustleOsc = rustle > 0.01 ? Math.sin(animTimeSec * 10.5 + wx * 1.4) * 0.055 * rustle : 0;
+        canopy.rotation.z = -(wind.dirX * wind.canopyTilt * gustWave + micro + rustleOsc);
+        canopy.rotation.x = wind.dirZ * wind.canopyTilt * gustWave + micro * 0.7;
+      } else if (entry.group.userData.isBush) {
+        const bushWave = Math.sin(animTimeSec * 2.5 + wx * 0.7 + wz * 0.5) * 0.032 * wind.gust;
+        let pushX = 0;
+        let pushZ = 0;
+        for (let i = 0; i < interactors.length; i++) {
+          const slot = interactors[i];
+          if (slot.w <= 0.02) continue;
+          const dx = wx - slot.x;
+          const dz = wz - slot.y;
+          const distSq = dx * dx + dz * dz;
+          const maxR = slot.z + 0.65;
+          if (distSq < maxR * maxR && distSq > 0.0001) {
+            const dist = Math.sqrt(distSq);
+            const strength = (1 - dist / maxR) * slot.w * 0.22;
+            pushX += (dx / dist) * strength;
+            pushZ += (dz / dist) * strength;
+          }
+        }
+        entry.group.rotation.z = -(wind.dirX * 0.04 * wind.gust + bushWave + pushX);
+        entry.group.rotation.x = wind.dirZ * 0.04 * wind.gust + bushWave * 0.6 + pushZ;
       }
     }
 
@@ -1102,10 +1163,12 @@ export class LowPolyDioramaRenderer {
     return tex;
   }
 
-  private syncBuildings(world: WorldState, nightFactor: number, animTimeSec: number) {
+  private syncBuildings(world: WorldState, nightFactor: number, animTimeSec: number, wind: WindSample) {
     const { season, weather } = world.environment;
     const ac = world.activeConstruction;
     const activeIds = new Set<string>();
+    const interactors = this.foliageUniforms.uInteractors.value;
+    const windAngle = Math.atan2(wind.dirX, wind.dirZ);
 
     for (const b of world.buildings) {
       activeIds.add(b.id);
@@ -1115,9 +1178,11 @@ export class LowPolyDioramaRenderer {
       const lit = nightFactor > 0.22 || weather === 'rain';
       const disrepairTier = (b.disrepair ?? 0) >= 75 ? 2 : (b.disrepair ?? 0) >= 45 ? 1 : 0;
       const cropStage = b.cropState ? `${b.cropState.cropType}_${Math.floor(b.cropState.growth * 3.99)}` : '';
-      const key = `${b.type}_${b.cultureId}_${b.unlocked}_${b.level}_${disrepairTier}_${isConstructing}_${ratioStep}_${lit}_${season}_${weather}_${cropStage}`;
+      const buildStage = b.constructionStage ?? '';
+      const pausedFlag = Boolean(b.pausedForMaterials);
+      const key = `${b.type}_${b.cultureId}_${b.unlocked}_${b.level}_${disrepairTier}_${isConstructing}_${ratioStep}_${buildStage}_${pausedFlag}_${lit}_${season}_${weather}_${cropStage}`;
 
-      const entry = this.buildingCache.get(b.id);
+      let entry = this.buildingCache.get(b.id);
       if (!entry || entry.key !== key) {
         if (entry) {
           this.buildingsGroup.remove(entry.group);
@@ -1139,17 +1204,52 @@ export class LowPolyDioramaRenderer {
         group.add(cShadow);
 
         this.buildingsGroup.add(group);
-        this.buildingCache.set(b.id, { key, group });
-      } else {
-        entry.group.children.forEach((c) => {
-          if (c.userData.isFlame) {
-            c.scale.set(
-              1 + Math.sin(animTimeSec * 10) * 0.12,
-              0.9 + Math.cos(animTimeSec * 12) * 0.18,
-              1,
-            );
+        entry = { key, group };
+        this.buildingCache.set(b.id, entry);
+      }
+
+      const bWx = entry.group.position.x;
+      const bWz = entry.group.position.z;
+      const children = entry.group.children;
+      for (let i = 0; i < children.length; i++) {
+        const c = children[i];
+        if (c.userData.isFlame) {
+          c.scale.set(
+            1 + Math.sin(animTimeSec * 10 + b.x * 0.1) * 0.12,
+            0.9 + Math.cos(animTimeSec * 12 + b.y * 0.1) * 0.18,
+            1,
+          );
+        } else if (c.userData.isBanner) {
+          const flutter = Math.sin(animTimeSec * 5.8 + bWx * 0.7 + i * 0.9) * wind.bannerFlutter;
+          c.rotation.y = flutter;
+          c.rotation.z = wind.dirX * 0.06 * wind.gust + flutter * 0.25;
+        } else if (c.userData.isWindsock) {
+          const flutter = Math.sin(animTimeSec * 7.5 + bWx) * wind.bannerFlutter * 0.55;
+          c.rotation.y = windAngle - entry.group.rotation.y + flutter * 0.35;
+          c.rotation.x = flutter * 0.25;
+        } else if (c.userData.isCropFoliage) {
+          const worldX = bWx + c.position.x;
+          const worldZ = bWz + c.position.z;
+          const cropWave = Math.sin(animTimeSec * 2.6 + worldX * 1.1 + worldZ * 0.9) * 0.065 * wind.gust;
+          let pushX = 0;
+          let pushZ = 0;
+          for (let j = 0; j < interactors.length; j++) {
+            const slot = interactors[j];
+            if (slot.w <= 0.02) continue;
+            const dx = worldX - slot.x;
+            const dz = worldZ - slot.y;
+            const distSq = dx * dx + dz * dz;
+            const maxR = slot.z * 0.9;
+            if (distSq < maxR * maxR && distSq > 0.0001) {
+              const dist = Math.sqrt(distSq);
+              const strength = (1 - dist / maxR) * slot.w * 0.28;
+              pushX += (dx / dist) * strength;
+              pushZ += (dz / dist) * strength;
+            }
           }
-        });
+          c.rotation.z = -(wind.dirX * 0.08 * wind.gust + cropWave + pushX);
+          c.rotation.x = wind.dirZ * 0.08 * wind.gust + cropWave * 0.65 + pushZ;
+        }
       }
     }
 
@@ -1238,11 +1338,12 @@ export class LowPolyDioramaRenderer {
 
       const stepDist = Math.hypot(dx, dz);
       const speedWorld = stepDist / Math.max(0.008, dt);
+      this.actorSpeedMap.set(v.id, speedWorld);
       const moving = speedWorld > 0.12;
       entry.walkWeight += ((moving ? 1 : 0) - entry.walkWeight) * weightAlpha;
       if (moving) entry.walkPhase += Math.min(0.65, stepDist * 4.4);
 
-      const targetGy = groundHeightAtSim(v.x, v.y, world.bridges);
+      const targetGy = groundHeightAtSim(v.x, v.y, world.bridges) + 0.12;
       entry.gy += (targetGy - entry.gy) * heightAlpha;
 
       const isSoaking = v.state === 'soaking' && !moving;
@@ -1255,17 +1356,24 @@ export class LowPolyDioramaRenderer {
       entry.yaw = dampAngle(entry.yaw, targetYaw, yawAlpha);
       g.rotation.y = entry.yaw;
 
-      const bootL = g.userData.bootL as THREE.Object3D | undefined;
-      const bootR = g.userData.bootR as THREE.Object3D | undefined;
-      const armL = g.userData.armL as THREE.Object3D | undefined;
-      const armR = g.userData.armR as THREE.Object3D | undefined;
+      const hipL = g.userData.hipL as THREE.Object3D | undefined;
+      const calfL = g.userData.calfL as THREE.Object3D | undefined;
+      const hipR = g.userData.hipR as THREE.Object3D | undefined;
+      const calfR = g.userData.calfR as THREE.Object3D | undefined;
+      const shoulderL = g.userData.shoulderL as THREE.Object3D | undefined;
+      const forearmL = g.userData.forearmL as THREE.Object3D | undefined;
+      const shoulderR = g.userData.shoulderR as THREE.Object3D | undefined;
+      const forearmR = g.userData.forearmR as THREE.Object3D | undefined;
       const headGroup = g.userData.headGroup as THREE.Object3D | undefined;
+      const spine = g.userData.bodyWrap?.children?.find((c: THREE.Object3D) => c !== headGroup && c !== g.userData.chiefBadge) as THREE.Object3D | undefined;
       const bodyWrap = g.userData.bodyWrap as THREE.Object3D | undefined;
 
       const w = entry.walkWeight;
-      const swing = Math.sin(entry.walkPhase) * 0.56 * w;
-      const stepBob = Math.abs(Math.sin(entry.walkPhase)) * 0.042 * w;
-      const breath = Math.sin(animTimeSec * 2.1 + v.x * 0.1) * 0.014;
+      const swing = Math.sin(entry.walkPhase) * 0.62 * w;
+      const kneeBendL = Math.max(0, Math.sin(entry.walkPhase)) * 0.75 * w;
+      const kneeBendR = Math.max(0, -Math.sin(entry.walkPhase)) * 0.75 * w;
+      const stepBob = Math.abs(Math.sin(entry.walkPhase)) * 0.052 * w;
+      const breath = Math.sin(animTimeSec * 2.1 + v.x * 0.1) * 0.016;
 
       const isInfant = v.lifeStage === 'infant';
       const isAxeWork = !moving && v.state === 'working' && v.activeTask === 'chop';
@@ -1278,13 +1386,11 @@ export class LowPolyDioramaRenderer {
       if (isInfant) {
         const crawl = Math.sin(animTimeSec * 5.2 + v.animPhase);
         const wiggle = Math.sin(animTimeSec * 3.1 + v.animPhase);
-        if (bootL) bootL.rotation.x = moving ? crawl * 0.55 : wiggle * 0.22;
-        if (bootR) bootR.rotation.x = moving ? -crawl * 0.55 : -wiggle * 0.22;
-        if (armL && armR) {
-          armL.rotation.x = moving ? -0.45 - crawl * 0.5 : -0.65 + wiggle * 0.45;
-          armR.rotation.x = moving ? -0.45 + crawl * 0.5 : -0.65 - wiggle * 0.45;
-          armL.rotation.z = moving ? 0 : 0.22 + wiggle * 0.2;
-          armR.rotation.z = moving ? 0 : -0.22 - wiggle * 0.2;
+        if (hipL) hipL.rotation.x = moving ? crawl * 0.55 : wiggle * 0.22;
+        if (hipR) hipR.rotation.x = moving ? -crawl * 0.55 : -wiggle * 0.22;
+        if (shoulderL && shoulderR) {
+          shoulderL.rotation.x = moving ? -0.45 - crawl * 0.5 : -0.65 + wiggle * 0.45;
+          shoulderR.rotation.x = moving ? -0.45 + crawl * 0.5 : -0.65 - wiggle * 0.45;
         }
         if (headGroup) {
           headGroup.rotation.z = wiggle * 0.14;
@@ -1296,60 +1402,59 @@ export class LowPolyDioramaRenderer {
           bodyWrap.rotation.z = wiggle * 0.07;
         }
       } else {
-        if (bootL) {
-          bootL.rotation.x = isSleeping ? -0.75 : swing;
-          bootL.position.y = 0.28 + Math.max(0, Math.sin(entry.walkPhase)) * 0.055 * w;
+        if (hipL) {
+          hipL.rotation.x = isSleeping ? -0.75 : swing;
         }
-        if (bootR) {
-          bootR.rotation.x = isSleeping ? -0.75 : -swing;
-          bootR.position.y = 0.28 + Math.max(0, -Math.sin(entry.walkPhase)) * 0.055 * w;
+        if (calfL) {
+          calfL.rotation.x = isSleeping ? 0.2 : kneeBendL;
+        }
+        if (hipR) {
+          hipR.rotation.x = isSleeping ? -0.75 : -swing;
+        }
+        if (calfR) {
+          calfR.rotation.x = isSleeping ? 0.2 : kneeBendR;
         }
 
-        if (armL && armR) {
-          armL.rotation.z = 0;
-          armR.rotation.z = 0;
+        if (shoulderL && shoulderR) {
+          shoulderL.rotation.z = 0;
+          shoulderR.rotation.z = 0;
           if (isCombat && v.weaponType === 'bow') {
-            // Bow aim pose: left arm holds bow extended forward, right arm draws string
             const draw = Math.max(0, Math.sin(animTimeSec * 5.2 + v.animPhase));
-            armL.rotation.x = -1.48;
-            armR.rotation.x = -1.32 + draw * 0.52;
-            armR.rotation.z = -0.18;
+            shoulderL.rotation.x = -1.48;
+            shoulderR.rotation.x = -1.32 + draw * 0.52;
+            if (forearmR) forearmR.rotation.x = -0.65;
           } else if (isCombat) {
-            // Melee spear thrust or blade slash
             const strike = Math.sin(animTimeSec * 9.5 + v.animPhase);
-            armL.rotation.x = -0.58 + strike * 0.16;
-            armR.rotation.x = -1.08 + strike * 0.78;
-            armR.rotation.z = 0.18 * strike;
+            shoulderL.rotation.x = -0.58 + strike * 0.16;
+            shoulderR.rotation.x = -1.18 + strike * 0.82;
+            if (forearmR) forearmR.rotation.x = -0.85 + strike * 0.4;
           } else if (isBuild || isPickWork) {
-            // Hammer / Pickaxe overhead strike
             const slam = Math.sin(animTimeSec * 8.2 + v.animPhase);
-            armL.rotation.x = -0.45 + slam * 0.22;
-            armR.rotation.x = -1.15 + slam * 0.75;
+            shoulderL.rotation.x = -0.45 + slam * 0.22;
+            shoulderR.rotation.x = -1.25 + slam * 0.85;
+            if (forearmR) forearmR.rotation.x = -0.9 + slam * 0.5;
           } else if (isAxeWork) {
-            // Sideways axe chopping swing
             const chop = Math.sin(animTimeSec * 7.6 + v.animPhase);
-            armL.rotation.x = -0.75 + chop * 0.35;
-            armR.rotation.x = -0.95 + chop * 0.52;
-            armR.rotation.z = -0.35 + chop * 0.42;
+            shoulderL.rotation.x = -0.75 + chop * 0.35;
+            shoulderR.rotation.x = -1.05 + chop * 0.62;
+            if (forearmR) forearmR.rotation.x = -0.75 + chop * 0.45;
           } else if (isGatherWork) {
             const pick = Math.sin(animTimeSec * 5.4 + v.animPhase);
-            armL.rotation.x = -0.85 + pick * 0.3;
-            armR.rotation.x = -0.85 - pick * 0.3;
+            shoulderL.rotation.x = -0.85 + pick * 0.3;
+            shoulderR.rotation.x = -0.85 - pick * 0.3;
           } else if (isStudyOrSocial) {
             const gesture = Math.sin(animTimeSec * 3.6 + v.animPhase);
-            armL.rotation.x = -0.48 + gesture * 0.28;
-            armR.rotation.x = -0.62 - gesture * 0.32;
+            shoulderL.rotation.x = -0.48 + gesture * 0.28;
+            shoulderR.rotation.x = -0.62 - gesture * 0.32;
           } else if (v.state === 'inspecting' && !moving) {
             const tilt = Math.sin(animTimeSec * 2.4 + v.animPhase);
-            armL.rotation.x = -0.55 + tilt * 0.18;
-            armR.rotation.x = -0.75 - tilt * 0.22;
-          } else if (v.state === 'working' && !moving) {
-            const workWave = Math.sin(animTimeSec * 4.5 + v.x * 0.05);
-            armL.rotation.x = -0.38 + workWave * 0.24;
-            armR.rotation.x = -0.45 - workWave * 0.28;
+            shoulderL.rotation.x = -0.55 + tilt * 0.18;
+            shoulderR.rotation.x = -0.75 - tilt * 0.22;
           } else {
-            armL.rotation.x = -swing * 0.85;
-            armR.rotation.x = swing * 0.85;
+            shoulderL.rotation.x = -swing * 0.85;
+            shoulderR.rotation.x = swing * 0.85;
+            if (forearmL) forearmL.rotation.x = -0.3 + Math.abs(swing) * 0.2;
+            if (forearmR) forearmR.rotation.x = -0.3 + Math.abs(swing) * 0.2;
           }
         }
 
@@ -1358,13 +1463,14 @@ export class LowPolyDioramaRenderer {
           headGroup.rotation.z = 0;
         }
 
-        if (bodyWrap) {
+        if (spine) {
           const inspectTilt = v.state === 'inspecting' && !moving ? 0.16 : 0;
-          const workLean = isGatherWork ? 0.28 : isPickWork || isAxeWork ? 0.16 : 0;
-          const inspectYaw = v.state === 'inspecting' && !moving ? Math.sin(animTimeSec * 2.1 + v.animPhase) * 0.24 : 0;
+          const workLean = isGatherWork ? 0.28 : isPickWork || isAxeWork ? 0.18 : 0;
+          spine.rotation.x = w * 0.12 + (isSleeping ? 0.24 : inspectTilt || workLean);
+        }
+
+        if (bodyWrap) {
           bodyWrap.position.y = stepBob + (isSleeping ? -0.04 : breath);
-          bodyWrap.rotation.x = w * 0.08 + (isSleeping ? 0.24 : inspectTilt || workLean);
-          bodyWrap.rotation.z = inspectYaw * 0.35;
         }
       }
 
@@ -1443,6 +1549,7 @@ export class LowPolyDioramaRenderer {
         this.villagersGroup.remove(entry.group);
         disposeGroupGeometries(entry.group);
         this.villagerCache.delete(id);
+        this.actorSpeedMap.delete(id);
       }
     }
   }
@@ -1549,6 +1656,23 @@ export class LowPolyDioramaRenderer {
       const bob = Math.abs(Math.sin(entry.phase)) * 0.06 * entry.moveWeight;
       entry.group.position.set(wx, entry.gy + bob, wz);
       entry.group.rotation.y = entry.yaw;
+
+      // Articulate animal legs and head
+      const g = entry.group;
+      const legFL = g.userData.legFL as THREE.Object3D | undefined;
+      const legFR = g.userData.legFR as THREE.Object3D | undefined;
+      const legBL = g.userData.legBL as THREE.Object3D | undefined;
+      const legBR = g.userData.legBR as THREE.Object3D | undefined;
+      const headGroup = g.userData.headGroup as THREE.Object3D | undefined;
+
+      const trot = Math.sin(entry.phase) * 0.55 * entry.moveWeight;
+      if (legFL) legFL.rotation.z = trot;
+      if (legBR) legBR.rotation.z = trot;
+      if (legFR) legFR.rotation.z = -trot;
+      if (legBL) legBL.rotation.z = -trot;
+      if (headGroup) {
+        headGroup.rotation.x = Math.sin(animTimeSec * 1.8 + l.x * 0.1) * 0.14 + (moving ? 0 : Math.sin(animTimeSec * 0.8) * 0.22);
+      }
     }
     for (const [id, entry] of this.livestockCache.entries()) {
       if (!activeStock.has(id)) {
@@ -1794,6 +1918,20 @@ export class LowPolyDioramaRenderer {
     }
     for (const v of [...world.villagers, ...world.raiders]) {
       addRing(v.x, v.y, 12, v.isStranger ? 0xef4444 : 0xf59e0b);
+      const wps = v.stuckState?.waypoints;
+      if (wps && wps.length > 0) {
+        const pts: THREE.Vector3[] = [
+          new THREE.Vector3(toWorldX(v.x), groundHeightAtSim(v.x, v.y, world.bridges) + 0.34, toWorldZ(v.y)),
+        ];
+        for (const wp of wps) {
+          pts.push(new THREE.Vector3(toWorldX(wp.x), groundHeightAtSim(wp.x, wp.y, world.bridges) + 0.34, toWorldZ(wp.y)));
+        }
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+        const mat = new THREE.LineBasicMaterial({ color: v.isStranger ? 0xf87171 : 0xfef08a, transparent: true, opacity: 0.85 });
+        const line = new THREE.Line(geo, mat);
+        line.userData.ownMaterial = true;
+        this.debugCollisionsGroup.add(line);
+      }
     }
   }
 
@@ -1831,12 +1969,26 @@ export class LowPolyDioramaRenderer {
     this.resize(viewW, viewH);
 
     const dt = Math.max(0.008, Math.min(0.1, rawDt));
-    this.windUniform.value = animTimeSec;
-
     const { season, weather, timeOfDay, festivalActive } = world.environment;
+    const wind = computeWindState(animTimeSec, weather, season);
+
     const atmo = sampleAtmosphere(timeOfDay, weather, season);
     const lampsLit = atmo.nightFactor > 0.25 || weather === 'rain' || festivalActive;
     const isRuinedMood = world.villageTrajectory === 'ruined' || world.villageTrajectory === 'ruin_risk';
+
+    // Update GPU foliage & ocean uniforms
+    this.foliageUniforms.uWindTime.value = animTimeSec;
+    this.foliageUniforms.uWindDir.value.set(wind.dirX, wind.dirZ);
+    this.foliageUniforms.uWindStrength.value = wind.gust;
+    this.foliageUniforms.uCloudShadow.value = Math.max(0.25, Math.min(1, 1.38 - wind.cloudShadowFactor));
+
+    this.waterUniforms.uWaveTime.value = animTimeSec * wind.waveSpeed;
+    this.waterUniforms.uWindDir.value.set(wind.dirX, wind.dirZ);
+    this.waterUniforms.uWaveAmp.value = wind.waveHeight;
+    this.waterUniforms.uNightFactor.value = atmo.nightFactor;
+    this.waterUniforms.uFoamTint.value.setHex(
+      season === 'winter' ? 0xf1f5f9 : atmo.nightFactor > 0.5 ? 0x9ecae1 : 0xeef9ff,
+    );
 
     if (isRuinedMood) {
       _colA.setHex(atmo.horizonHex).lerp(_colB.setHex(0x555b66), 0.35);
@@ -1854,18 +2006,30 @@ export class LowPolyDioramaRenderer {
       this.fog.density = weather === 'mist' ? 0.00125 : 0.00048;
     }
 
+    // Focus world target (needed early so shadows, bonfire point light, and actor foliage radius stay centered)
+    const clampedX = Math.max(260, Math.min(WORLD_WIDTH - 260, cameraState.x));
+    const clampedY = Math.max(200, Math.min(WORLD_HEIGHT - 200, cameraState.y));
+    const tx = toWorldX(clampedX);
+    const tz = toWorldZ(clampedY);
+    const focusElev =
+      cameraState.focusIslandId !== 'all' ? ISLAND_DEFS[cameraState.focusIslandId].elevationY : 1.4;
+    const ty = focusElev + 0.5;
+
     this.hemiLight.color.setHex(atmo.hemiSkyHex);
     this.hemiLight.groundColor.setHex(atmo.hemiGroundHex);
     this.hemiLight.intensity = atmo.hemiIntensity * (isRuinedMood ? 0.85 : 1);
 
-    const sunAngle = (atmo.sunProgress - 0.5) * Math.PI * 0.72;
-    this.sunLight.position.set(Math.sin(sunAngle) * 72, 34 + Math.cos(sunAngle) * 32, 34);
+    const sunPos = computeAnchoredSunPosition(tx, ty, tz, atmo.sunProgress);
+    this.sunLight.position.set(sunPos.x, sunPos.y, sunPos.z);
+    this.sunLight.target.position.set(tx, ty - 0.5, tz);
+    this.sunLight.target.updateMatrixWorld();
     this.sunLight.color.setHex(atmo.sunHex);
-    this.sunLight.intensity = atmo.sunIntensity * (isRuinedMood ? 0.82 : 1);
+    this.sunLight.intensity = atmo.sunIntensity * wind.cloudShadowFactor * (isRuinedMood ? 0.82 : 1);
 
     this.rimLight.color.setHex(atmo.rimHex);
     this.rimLight.intensity = 0.45 + (1 - atmo.nightFactor) * 0.25;
 
+    const sunAngle = (atmo.sunProgress - 0.5) * Math.PI * 0.72;
     this.celestialOrb.position.set(Math.sin(sunAngle) * 280, 76 + Math.cos(sunAngle) * 38, -320);
     (this.celestialOrb.material as THREE.MeshBasicMaterial).color.setHex(
       atmo.nightFactor > 0.5 ? 0xeef2f7 : 0xfff3c4,
@@ -1873,36 +2037,65 @@ export class LowPolyDioramaRenderer {
     this.starsMat.opacity = Math.max(0, (atmo.nightFactor - 0.26) * 1.4);
     this.starsPoints.visible = this.starsMat.opacity > 0.02;
 
-    const flicker = 0.88 + Math.sin(animTimeSec * 8.5) * 0.12;
-    const hasCradleFire = world.buildings.some((b) => b.type === 'bonfire' && b.unlocked);
-    this.bonfireLight.intensity = hasCradleFire ? 4.4 * Math.max(0.24, atmo.nightFactor) * flicker : 0;
+    // Anchor warm bonfire PointLight to the nearest active bonfire to the focused island
+    let bestFireDist = Infinity;
+    let bestFireX = tx;
+    let bestFireY = 2.5;
+    let bestFireZ = tz;
+    for (let i = 0; i < world.buildings.length; i++) {
+      const b = world.buildings[i];
+      if (!b.unlocked || (b.type !== 'bonfire' && b.type !== 'smeltery')) continue;
+      const bx = toWorldX(b.x);
+      const bz = toWorldZ(b.y);
+      const dSq = (bx - tx) * (bx - tx) + (bz - tz) * (bz - tz);
+      if (dSq < bestFireDist) {
+        bestFireDist = dSq;
+        bestFireX = bx;
+        bestFireY = groundHeightAtSim(b.x, b.y, world.bridges) + 1.4;
+        bestFireZ = bz;
+      }
+    }
+    if (bestFireDist < Infinity) {
+      const flicker = 0.88 + Math.sin(animTimeSec * 8.5 + bestFireX) * 0.12;
+      this.bonfireLight.position.set(bestFireX, bestFireY, bestFireZ);
+      this.bonfireLight.intensity = 4.6 * Math.max(0.26, atmo.nightFactor) * flicker;
+    } else {
+      this.bonfireLight.intensity = 0;
+    }
 
-    // Sky-Sea wave animation
+    // Wind-driven multi-wave Sky-Sea swells
     this.waterMat.color.setHex(season === 'winter' ? 0x5c96b2 : atmo.nightFactor > 0.55 ? 0x24526e : 0x3b96ba);
     const wPos = this.waterMesh.geometry.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < wPos.count; i++) {
       const wx = wPos.getX(i);
       const wz = wPos.getZ(i);
-      wPos.setY(i, this.waterBaseY[i] + Math.sin(animTimeSec * 1.8 + wz * 0.35 + wx * 0.4) * 0.055);
+      const disp = computeWaveDisplacement(wx, wz, animTimeSec, wind);
+      wPos.setY(i, this.waterBaseY[i] + disp.dy);
     }
     wPos.needsUpdate = true;
     this.waterMesh.geometry.computeVertexNormals();
 
+    // Wind-aligned cloud drift
     this.cloudsGroup.visible = weather !== 'rain';
     if (this.cloudsGroup.visible) {
+      const cloudMult = dt * (world.settings.simSpeed || 1) * wind.speed;
       for (const c of this.cloudStates) {
-        c.wx += c.speed * dt * (world.settings.simSpeed || 1);
-        if (c.wx > 420) c.wx = -420;
+        c.wx += wind.dirX * c.speed * cloudMult;
+        c.wz += wind.dirZ * c.speed * cloudMult;
+        if (c.wx > 420) c.wx -= 840;
+        else if (c.wx < -420) c.wx += 840;
+        if (c.wz > 260) c.wz -= 520;
+        else if (c.wz < -260) c.wz += 520;
         c.mesh.position.set(c.wx, c.y3, c.wz);
       }
     }
 
-    // Soaring sky-bird flock animation
+    // Soaring sky-bird flock animation (gently banks with wind)
     const birdSimMult = world.settings.simSpeed === 0 ? 0.2 : 1;
     for (const b of this.skyBirdStates) {
       b.angle += b.speed * dt * birdSimMult;
-      const bx = b.centerX + Math.cos(b.angle) * b.radius;
-      const bz = b.centerZ + Math.sin(b.angle) * b.radius;
+      const bx = b.centerX + Math.cos(b.angle) * b.radius + wind.dirX * Math.sin(animTimeSec * 0.4) * 1.1;
+      const bz = b.centerZ + Math.sin(b.angle) * b.radius + wind.dirZ * Math.sin(animTimeSec * 0.4) * 1.1;
       const by = b.baseY + Math.sin(animTimeSec * 0.9 + b.phase) * 0.7;
       b.mesh.position.set(bx, by, bz);
       const tangentYaw = Math.atan2(-Math.sin(b.angle) * b.speed, Math.cos(b.angle) * b.speed);
@@ -1922,27 +2115,33 @@ export class LowPolyDioramaRenderer {
     this.syncExploreRuins(world, atmo.nightFactor, animTimeSec);
     this.syncBridges(world, lampsLit);
     this.syncCableways(world, lampsLit);
-    this.syncWildNodes(world);
+
+    // Sync moving actors first so actorSpeedMap & foliage interactors are fresh for both instanced & node foliage
+    this.syncPeople(world, selectedVillagerId, selectedUnitIds ?? new Set(), hoveredVillagerId, animTimeSec, dt);
+    this.syncAnimalsAndBoats(world, animTimeSec, dt);
+    packActorFoliageInteractors(
+      this.foliageUniforms.uInteractors.value,
+      world.villagers,
+      world.livestock,
+      world.wildHerds,
+      { x: world.catX, y: world.catY },
+      tx,
+      tz,
+      toWorldX,
+      toWorldZ,
+      this.actorSpeedMap,
+    );
+
+    this.syncWildNodes(world, wind, animTimeSec);
     this.syncPlacedSuggestions(world, animTimeSec);
     this.syncMemorials(world);
-    this.syncBuildings(world, atmo.nightFactor, animTimeSec);
-    this.syncPeople(world, selectedVillagerId, selectedUnitIds ?? new Set(), hoveredVillagerId, animTimeSec, dt);
+    this.syncBuildings(world, atmo.nightFactor, animTimeSec, wind);
     this.syncGliders(world, animTimeSec);
     this.syncGateTravelers(world, animTimeSec);
-    this.syncAnimalsAndBoats(world, animTimeSec, dt);
     this.syncProjectiles(world);
     this.syncParticles(particles, world);
     this.syncPeerMarkers(peers, world, animTimeSec);
     this.syncDebugCollisions(world, debugShowCollisions);
-
-    // Rotatable Overview <-> Focus Camera Framing
-    const clampedX = Math.max(260, Math.min(WORLD_WIDTH - 260, cameraState.x));
-    const clampedY = Math.max(200, Math.min(WORLD_HEIGHT - 200, cameraState.y));
-    const tx = toWorldX(clampedX);
-    const tz = toWorldZ(clampedY);
-    const focusElev =
-      cameraState.focusIslandId !== 'all' ? ISLAND_DEFS[cameraState.focusIslandId].elevationY : 1.4;
-    const ty = focusElev + 0.5;
 
     const clampedZoom = Math.max(0.06, Math.min(3.2, cameraState.zoom));
     const yaw = Number.isFinite(cameraState.yaw) ? cameraState.yaw : -0.095;
@@ -1956,9 +2155,6 @@ export class LowPolyDioramaRenderer {
     this.camera.position.copy(this.tmpVec);
     this.camera.lookAt(this.tmpTarget);
     this.camera.updateMatrixWorld();
-
-    this.sunLight.target.position.set(tx, 0, tz);
-    this.sunLight.target.updateMatrixWorld();
 
     if (this.composer && !this.isSoftwareGl) {
       this.composer.render();

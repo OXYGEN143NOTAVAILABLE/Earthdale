@@ -12,6 +12,7 @@ interface TitleScreenProps {
   onNewVillage: (mode: GameMode) => void;
   onHostMultiplayer: (playerName: string, playerColor: string, mode: GameMode) => void;
   onJoinMultiplayer: (roomCode: string, playerName: string, playerColor: string) => void;
+  onOpenSandbox?: () => void;
   mpConnecting: boolean;
   mpError: string | null;
 }
@@ -28,6 +29,7 @@ export function TitleScreen({
   onNewVillage,
   onHostMultiplayer,
   onJoinMultiplayer,
+  onOpenSandbox,
   mpConnecting,
   mpError,
 }: TitleScreenProps) {
@@ -290,6 +292,15 @@ export function TitleScreen({
                         ? 'Siege'
                         : 'Whispering'}{' '}
                     Realm
+                  </button>
+                )}
+                {onOpenSandbox && (
+                  <button
+                    type="button"
+                    onClick={onOpenSandbox}
+                    className="px-3.5 py-2.5 rounded-sm bg-[#17212C] hover:bg-[#223142] text-[#A8D8EA] border border-[#6E8AB5]/50 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    Simulation Sandbox
                   </button>
                 )}
               </div>

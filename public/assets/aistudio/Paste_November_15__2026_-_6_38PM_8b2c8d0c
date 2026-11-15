@@ -1,0 +1,852 @@
+# EARTHDALE — SETTLEMENT DEVELOPMENT, WORLD EVOLUTION & CULTURAL SYSTEMS
+
+## Objective
+
+Continue the development of Earthdale by implementing and improving the settlement, construction, environmental adaptation, leadership, generational, and cultural systems discussed during the design process.
+
+This is a follow-up to the previously completed **NPC Intelligence, Social Simulation & Civilization Progression Overhaul**.
+
+The previous implementation should be treated as existing work.
+
+**DO NOT recreate, replace, or unnecessarily rewrite systems already implemented in the first overhaul.**
+
+Inspect the current repository first. Identify existing functionality and integrate the systems below into the current codebase.
+
+The objective is to make villages feel like evolving communities whose physical appearance, organization, development, and identity emerge naturally from their inhabitants and their history.
+
+---
+
+# 1. Hybrid RTS Command and Community Management
+
+Earthdale should retain its hybrid RTS identity.
+
+The player should have the ability to influence the settlement without controlling every villager individually.
+
+The existing NPC autonomy should remain intact.
+
+The player should be able to:
+
+- Select individual villagers and issue direct commands.
+- Assign, replace, or cancel individual tasks.
+- Establish settlement-wide priorities.
+- Designate areas for gathering, farming, construction, and expansion.
+- Mark areas where construction should be avoided.
+- Direct the general development of the settlement.
+
+### Community priorities
+
+Villagers should participate in determining what the settlement needs.
+
+They should be able to discuss and evaluate priorities such as:
+
+- Gathering additional resources.
+- Constructing new housing.
+- Developing agricultural areas.
+- Improving existing infrastructure.
+- Preparing for environmental challenges.
+- Expanding the settlement.
+
+Community decisions should consider survival needs, available resources, population, leadership, and player direction.
+
+Direct player commands should generally take precedence, although critical survival needs may interrupt them.
+
+The goal is to balance player control with believable community autonomy.
+
+---
+
+# 2. Staged Construction System
+
+Buildings must not appear instantly when a construction task is assigned.
+
+Construction should be a visible, physical process requiring resources, transportation, and actual labor.
+
+### Construction stages
+
+Implement a flexible construction-stage system.
+
+For example, a house may progress through:
+
+1. **Foundation and site preparation**
+   - Preparing the construction site.
+   - Clearing obstacles.
+   - Transporting initial materials.
+   - Establishing the foundation.
+
+2. **Structural construction**
+   - Building walls and supporting structures.
+   - Transporting and consuming additional materials.
+   - Visible construction progress.
+
+3. **Roof and finishing**
+   - Installing the roof.
+   - Completing structural details.
+   - Performing finishing work.
+
+4. **Completed building**
+   - The building becomes fully functional.
+   - Its intended services and activities become available.
+
+Different building types should have appropriate construction stages. Not every building needs to follow the same sequence.
+
+### Construction behavior
+
+- Villagers must physically transport materials.
+- Materials should be consumed progressively.
+- Construction requires actual worker participation.
+- Construction animations should correspond to the current task.
+- Progress should reflect labor and material availability.
+- Construction can pause when materials are unavailable.
+- Emergencies and changing priorities may interrupt construction.
+- Unfinished buildings must retain their current progress when interrupted.
+- Villagers should be able to resume unfinished construction later.
+
+**Only fully completed buildings should become functional.**
+
+Avoid visual shortcuts where a building is considered completed while its construction is still visibly unfinished.
+
+---
+
+# 3. Intelligent Settlement Planning and Building Placement
+
+Improve how buildings are selected and positioned within a settlement.
+
+Avoid random building placement.
+
+Villagers and settlement planners should consider:
+
+- Terrain and elevation.
+- Available resources.
+- Accessibility.
+- Nearby buildings.
+- Existing paths and roads.
+- Distance from important locations.
+- Available construction space.
+- Population and community needs.
+- Future settlement expansion.
+- Environmental conditions.
+
+### Organic settlement development
+
+Settlements should evolve gradually.
+
+A possible progression:
+
+1. Primitive shelters placed near immediate survival resources.
+2. Small clusters of homes and shared activity areas.
+3. More established communal spaces and recognizable settlement centers.
+4. Organized residential, agricultural, and production areas.
+5. More developed infrastructure and deliberate settlement expansion.
+
+Do not force villages into perfect grids or rigid city layouts.
+
+Organic variation should remain.
+
+### Player influence
+
+The player should be able to:
+
+- Designate preferred residential areas.
+- Designate production and agricultural zones.
+- Reserve areas for future expansion.
+- Prevent construction in specific locations.
+- Direct the general direction of settlement growth.
+
+Villagers should evaluate actual building locations within the player's designated constraints.
+
+### Existing buildings
+
+Completed buildings should remain in place by default.
+
+The settlement should adapt around existing structures rather than constantly relocating them.
+
+Relocation should only happen through an intentional player decision or a rare, justified community decision.
+
+Preserve the historical influence of existing buildings and settlement structures.
+
+---
+
+# 4. Emergent Paths and Road Development
+
+Develop a path system that distinguishes navigation from physical path creation.
+
+These are separate but connected systems.
+
+### 4.1 Navigation and pathfinding
+
+Villagers should be able to calculate and follow valid routes while considering:
+
+- Terrain.
+- Elevation.
+- Water.
+- Obstacles.
+- Buildings.
+- Other entities.
+- Bridges and cableways.
+- Available crossing points.
+- Movement conditions.
+
+Deep water should remain impassable unless a valid crossing method exists.
+
+Pathfinding should not be confused with the creation of visible roads.
+
+### 4.2 Emergent footpaths
+
+Repeated villager movement should gradually influence the terrain.
+
+For example:
+
+1. Initially, villagers walk across natural terrain.
+2. Frequently used routes gradually become visible footpaths.
+3. Grass and ground appearance change according to traffic.
+4. Villagers begin recognizing commonly used routes.
+5. Frequently traveled paths may eventually become candidates for deliberate improvement.
+
+Path development should reflect actual movement rather than appearing automatically whenever buildings are constructed.
+
+### 4.3 Deliberate road development
+
+As the settlement develops, villagers should be able to improve existing paths.
+
+This may involve:
+
+- Clearing obstacles.
+- Flattening or preparing terrain.
+- Adding gravel, wood, or stone.
+- Improving muddy or difficult sections.
+- Connecting important buildings and resource locations.
+
+Road development should consider:
+
+- Traffic frequency.
+- Terrain and elevation.
+- Distance between important locations.
+- Resource availability.
+- Community priorities.
+- Leadership decisions.
+- Existing settlement layout.
+
+Roads should develop progressively and require actual labor and materials.
+
+---
+
+# 5. Individual Skills and Community Knowledge
+
+Integrate individual skills with community-wide technological and practical knowledge.
+
+Do not recreate an existing general civilization progression system. Extend it where necessary to support the specific behavior described below.
+
+### Individual skill development
+
+Villagers should improve through actual practice.
+
+Examples include:
+
+- Gathering.
+- Construction.
+- Woodworking.
+- Crafting.
+- Farming.
+- Hunting.
+- Cooking.
+- Social activities.
+
+Skills should develop gradually.
+
+Skill progression must be slow and relatively rare, particularly at higher levels.
+
+Villagers should not become exceptionally skilled in every occupation simply by living long enough.
+
+Individual differences should remain meaningful.
+
+### Skill aptitude and specialization
+
+Natural aptitude, personality, experience, and opportunities should influence development.
+
+Everyone should have the opportunity to improve, but villagers should not necessarily reach the same skill levels or develop at the same rate.
+
+High skill should provide meaningful advantages without making the rest of the workforce unnecessary.
+
+### Community knowledge
+
+Individual discoveries should not automatically become community knowledge.
+
+Knowledge should spread through:
+
+- Teaching.
+- Demonstration.
+- Collaboration.
+- Repeated experimentation.
+- Sharing discoveries.
+- Community activities.
+
+For example:
+
+A villager develops a better woodworking technique through experience. They share it with other villagers, who gradually learn and practice it. Eventually, the technique becomes established community knowledge.
+
+Community knowledge should require actual participation and adoption.
+
+It should not unlock simply because time passes or one individual reaches a certain skill level.
+
+### Notifications and progress visibility
+
+Provide ways for the player to observe meaningful progression.
+
+Examples:
+
+- A villager reaches level 2 in gathering.
+- A villager becomes an experienced builder.
+- A new community technique is discovered.
+- A construction project reaches its next stage.
+- A village adopts a new practical technique.
+
+Provide an NPC overview where the player can inspect individual skills, experience, and relevant milestones.
+
+Avoid overwhelming the player with unnecessary notifications.
+
+---
+
+# 6. Village Leadership and Community Development
+
+Village leadership should emerge organically from the community.
+
+Do not simply assign a permanent leader through a static village-generation process.
+
+### Leadership emergence
+
+A villager may gradually become a leader through:
+
+- Reputation.
+- Relationships.
+- Experience.
+- Contributions to the community.
+- Demonstrated capability.
+- Social influence.
+- Trust from other villagers.
+
+Leadership should be dynamic.
+
+A leader may lose influence, face opposition, or eventually be replaced.
+
+### Leadership influence
+
+Leaders should influence:
+
+- Community priorities.
+- Settlement planning.
+- Construction decisions.
+- Resource allocation.
+- Path and road development.
+- Cultural traditions.
+- Technological priorities.
+- External relationships.
+
+However, leaders should not directly control every villager.
+
+Their influence should operate through community decisions, reputation, and social relationships.
+
+### Leadership personalities
+
+Consider different leadership tendencies:
+
+- Practical.
+- Expansionist.
+- Traditionalist.
+- Innovative.
+- Defensive.
+- Diplomatic.
+
+These should be behavioral tendencies, not rigid predefined leader classes.
+
+### Leadership and settlement identity
+
+A village's development should depend partly on its leaders.
+
+Different leaders may encourage different development priorities.
+
+For example, an expansion-oriented leader may favor new housing and infrastructure, while a traditionalist leader may prioritize preserving established practices.
+
+Leadership changes should influence development without erasing the settlement's accumulated history.
+
+---
+
+# 7. Autonomous Non-Player Villages
+
+Non-player settlements should function as actual communities rather than decorative or static locations.
+
+They should independently manage their development.
+
+Their simulation should account for:
+
+- Population.
+- Resource gathering.
+- Resource consumption.
+- Construction.
+- Housing.
+- Occupations.
+- Community priorities.
+- Individual and community skills.
+- Technological development.
+- Leadership.
+- Cultural identity.
+- Settlement planning.
+
+### Independent development
+
+Non-player villages should make decisions based on their own circumstances.
+
+Different settlements should develop differently because of:
+
+- Geography.
+- Available resources.
+- Population.
+- Leadership.
+- Historical experiences.
+- Community knowledge.
+- Cultural preferences.
+
+Do not assign every non-player village the same development pattern.
+
+### Background simulation
+
+Consider performance carefully.
+
+Use different simulation detail levels:
+
+- Full simulation for the player's settlement.
+- Detailed simulation for nearby or relevant settlements.
+- Efficient background simulation for distant settlements.
+
+Background simulation should preserve important changes to population, resources, leadership, construction, and development.
+
+Avoid making distant villages appear frozen in time when the player is not nearby.
+
+Future diplomacy, trade, and conflict can build on this foundation, but do not implement a complete combat or diplomacy overhaul as part of this task.
+
+---
+
+# 8. Environmental Adaptation
+
+Every settlement should adapt to its spawning environment.
+
+Environmental conditions should provide different opportunities and challenges.
+
+Consider examples such as:
+
+### Forest settlements
+- Greater access to wood and wildlife.
+- Opportunities for woodworking.
+- Timber-based architecture.
+- Resource gathering and forest management.
+
+### Coastal settlements
+- Access to fishing and maritime resources.
+- Opportunities for boats and maritime knowledge.
+- Coastal infrastructure.
+- Adaptation to water and weather conditions.
+
+### Mountain settlements
+- Access to stone and elevation-based resources.
+- Difficult terrain and transportation.
+- Terraced agriculture.
+- Mountain-adapted construction and paths.
+
+### Grassland settlements
+- Agricultural opportunities.
+- Livestock development.
+- Greater opportunities for settlement expansion.
+- Farming and production infrastructure.
+
+These are examples, not fixed village classes.
+
+A settlement should not receive an artificial identity merely because it spawned in a particular biome.
+
+Its development should emerge from how its inhabitants use the environment.
+
+---
+
+# 9. Cultural Identity and Traditions
+
+Develop a cultural system that emerges from village history, environment, leadership, resources, technology, and community experiences.
+
+Culture should not be selected from a predefined menu.
+
+### Cultural development
+
+Culture should be influenced by:
+
+- Founding families.
+- Geographic environment.
+- Common occupations.
+- Historical events.
+- Community achievements and hardships.
+- Leadership.
+- Relationships with other villages.
+- Technological discoveries.
+- Adopted practices.
+
+Different villages should develop distinct identities even when they share similar environments.
+
+### Traditions and cultural depth
+
+Distinguish between:
+
+- Newly introduced practices.
+- Established community traditions.
+- Deep-rooted historical traditions.
+
+The longer a tradition has existed and the more deeply accepted it has become, the harder it should be to change.
+
+However, traditions should never be completely immutable.
+
+### Cultural disagreement
+
+Villagers may have different opinions about traditions and new practices.
+
+For example, some may prefer traditional construction methods while others support newer techniques.
+
+Disagreements should influence relationships, community discussions, and cultural development.
+
+Do not automatically divide a village into separate factions.
+
+### Cultural interaction
+
+Villages should be capable of influencing each other through future interactions.
+
+Trade, travel, relationships, and shared experiences may introduce new practices.
+
+Some villagers may accept these changes while others prefer established traditions.
+
+Cultural adoption should happen gradually rather than instantly.
+
+---
+
+# 10. Generational Heritage and Cultural Inheritance
+
+Culture should persist through generations.
+
+Children should grow up exposed to the traditions and practices of their families and communities.
+
+Influences should include:
+
+- Parents.
+- Elders.
+- Community leaders.
+- Family occupations.
+- Local traditions.
+- Historical stories.
+- Community activities.
+
+Children should not simply copy their parents' personalities, skills, or beliefs.
+
+They should develop their own identities.
+
+### Generational cultural development
+
+As children grow older, their beliefs may be influenced by:
+
+- Their upbringing.
+- Personal experiences.
+- Friendships.
+- Occupations.
+- Travel.
+- Exposure to other cultures.
+- New discoveries.
+
+Some may preserve traditions, while others gradually adopt different practices.
+
+Over generations, this should allow culture to evolve without losing its historical continuity.
+
+---
+
+# 11. Cultural Aesthetics and Visual Identity
+
+Cultural identity must be reflected in the actual appearance of the world.
+
+It should influence the visual design of villagers, buildings, interiors, tools, armor, and public spaces.
+
+### Clothing
+
+Clothing should reflect:
+
+- Environment and climate.
+- Available materials.
+- Technology.
+- Cultural preferences.
+- Occupations.
+- Social customs.
+
+Villagers should have individual variation rather than wearing identical outfits.
+
+### Armor
+
+Armor should reflect both technological capability and cultural preference.
+
+Villages with access to similar materials may develop different armor designs.
+
+For example, one village may prefer layered leather and wooden protection, while another favors decorated metal armor.
+
+Armor should remain functional, not merely decorative.
+
+### Architecture
+
+Cultural aesthetics should influence:
+
+- Building shapes.
+- Roof designs.
+- Materials and finishes.
+- Construction techniques.
+- Structural decorations.
+- Architectural patterns.
+
+Villages with similar technological capabilities should still be able to develop different architectural styles.
+
+### Interiors
+
+Extend cultural variation inside buildings.
+
+Consider:
+
+- Furniture designs.
+- Furniture arrangements.
+- Decorative objects.
+- Household tools.
+- Wall decorations.
+- Storage arrangements.
+- Ceremonial interiors.
+
+### Tools and craftsmanship
+
+Allow cultural differences in:
+
+- Tool designs.
+- Handles.
+- Materials.
+- Ornamentation.
+- Carving patterns.
+- Crafting techniques.
+
+### Public spaces
+
+Cultural identity should also appear in:
+
+- Gathering areas.
+- Ceremonial spaces.
+- Monuments.
+- Decorations.
+- Historical landmarks.
+- Community structures.
+
+---
+
+# 12. Village Symbols and Historical Identity
+
+Each village should gradually develop recognizable symbols and visual motifs.
+
+These should emerge from meaningful experiences rather than random decoration.
+
+Consider:
+
+- Village emblems.
+- Banners and flags.
+- Family markings.
+- Cultural patterns.
+- Leadership insignia.
+- Historical symbols.
+- Ceremonial decorations.
+
+For example, a village that survived a devastating forest fire might eventually adopt a symbol representing renewal or survival.
+
+That symbol could appear on its banners, architecture, clothing, and ceremonial objects.
+
+Village symbols should represent the community and its history, not simply its current leader.
+
+A leadership change should not automatically erase the village's established identity.
+
+---
+
+# 13. Integration and System Boundaries
+
+All of these systems should interact through the existing simulation.
+
+Examples:
+
+- Leadership influences community priorities and settlement planning.
+- Settlement planning considers geography, resources, and existing infrastructure.
+- Environmental conditions influence occupations and resource availability.
+- Individual skills contribute to community knowledge.
+- Community knowledge enables new construction and craftsmanship.
+- Cultural preferences influence architecture and equipment designs.
+- Historical events influence traditions and village symbols.
+- Generational inheritance preserves and gradually changes cultural identity.
+
+Avoid implementing these as disconnected features.
+
+However, do not create unnecessary dependencies or combine every system into one large script.
+
+Keep the systems modular and allow them to communicate through appropriate shared data and events.
+
+---
+
+# 14. Movement and Pathfinding Improvements
+
+This task should also address the specific movement and pathfinding issues identified during development.
+
+Do not repeat the entire physics and collision overhaul from the first prompt.
+
+Focus on the remaining movement quality and navigation issues.
+
+### Movement speed
+
+NPC movement should feel slower, more deliberate, and natural.
+
+Consider:
+
+- Walking pace.
+- Acceleration and deceleration.
+- Turning speed.
+- Stopping behavior.
+- Carrying heavy materials.
+- Terrain and slope.
+- Animation synchronization.
+
+Avoid simply reducing every movement value globally without considering how movement interacts with animations and tasks.
+
+### Pathfinding quality
+
+Improve how villagers:
+
+- Navigate around obstacles.
+- Approach buildings and workstations.
+- Reach gathering locations.
+- Move through crowded areas.
+- Use existing paths.
+- Recover from blocked routes.
+
+Prevent jittering, repeated route recalculation, and unnecessary movement.
+
+Ensure that villagers can approach interaction points naturally instead of standing inside objects or clipping through structures.
+
+### Animation alignment
+
+Movement and task animations should correspond to actual movement and interaction states.
+
+Pay particular attention to:
+
+- Walking.
+- Turning.
+- Stopping.
+- Carrying.
+- Gathering.
+- Chopping.
+- Building.
+- Crafting.
+- Sitting.
+- Resting.
+- Eating.
+- Social interaction.
+
+Prevent foot sliding, terrain clipping, jitter, and incorrect ground alignment.
+
+---
+
+# 15. Implementation Workflow
+
+Before implementation:
+
+1. Inspect the current repository and the changes from the first completed prompt.
+2. Identify which requested systems already exist.
+3. Identify incomplete features and missing dependencies.
+4. Determine which systems can be extended without rewriting existing functionality.
+5. Establish a practical implementation order.
+6. Identify potential performance risks and interactions between systems.
+
+Implement incrementally.
+
+Do not attempt to implement every system in one large change if doing so risks destabilizing the game.
+
+Prioritize foundational dependencies.
+
+A suggested order:
+
+**Phase 1 — Settlement foundations**
+- Staged construction.
+- Material transportation and consumption.
+- Intelligent building placement.
+- Settlement planning.
+
+**Phase 2 — Movement and infrastructure**
+- Natural movement pacing.
+- Navigation improvements.
+- Emergent footpaths.
+- Deliberate road development.
+
+**Phase 3 — Community development**
+- Leadership emergence and succession.
+- Leadership influence on settlement development.
+- Autonomous non-player village development.
+- Environmental adaptation.
+
+**Phase 4 — Skills and knowledge integration**
+- Individual specialization.
+- Community knowledge sharing.
+- Skill and knowledge progress visibility.
+
+**Phase 5 — Culture and generational identity**
+- Cultural beliefs and traditions.
+- Generational inheritance.
+- Cultural aesthetics.
+- Architecture and interiors.
+- Clothing and armor.
+- Village symbols and historical identity.
+
+This order is a suggested dependency structure, not a requirement to implement everything simultaneously.
+
+---
+
+# 16. Testing and Expected Results
+
+Test the systems with multiple settlements in different environments.
+
+Allow sufficient simulated time for meaningful differences to emerge.
+
+Verify that:
+
+- Buildings require actual construction.
+- Construction progresses through visible stages.
+- Materials are transported and consumed.
+- Unfinished construction can be resumed.
+- Building placement considers surroundings and community needs.
+- Settlements develop organically.
+- Footpaths emerge from repeated movement.
+- Roads require deliberate development.
+- Villagers move naturally and at an appropriate pace.
+- Leaders emerge and can lose influence.
+- Leadership affects village development.
+- Non-player settlements develop independently.
+- Different environments create different opportunities and challenges.
+- Individual skills contribute to community knowledge.
+- Culture develops through experiences and history.
+- Traditions persist across generations.
+- Children inherit cultural exposure without inheriting identical personalities.
+- Villages develop distinctive clothing, armor, architecture, interiors, and symbols.
+- Cultural identities remain recognizable across leadership changes.
+- Existing functionality from the first overhaul remains intact.
+
+## Final Deliverables
+
+After implementation, provide:
+
+1. A summary of the existing systems reused.
+2. A summary of the new systems implemented.
+3. A list of modified and newly created files.
+4. An explanation of how the systems interact.
+5. Testing performed and results.
+6. Known bugs or performance concerns.
+7. Features that remain incomplete.
+8. Recommended next development priorities.
+
+Do not claim a feature is complete unless it has actually been implemented and tested.
+
+The intended result is a world where settlements grow, organize themselves, adapt to their surroundings, develop leaders, construct infrastructure, preserve history, and gradually form distinct identities.
+
+**Earthdale should feel like a world with evolving communities, not a collection of static villages.**

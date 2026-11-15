@@ -7,6 +7,7 @@ import { DevToolsDrawer, type DevActionPayload } from './components/DevToolsDraw
 import { NpcInspector } from './components/NpcInspector';
 import { PauseModal } from './components/PauseModal';
 import { RealmLedger } from './components/RealmLedger';
+import { SandboxView } from './components/SandboxView';
 import { TitleScreen } from './components/TitleScreen';
 import { TopBar } from './components/TopBar';
 import { ValleyMapDrawer } from './components/ValleyMapDrawer';
@@ -22,6 +23,7 @@ import {
 import { LowPolyDioramaRenderer } from './game/lowPolyRenderer';
 import { groundHeightAtSim } from './game/lowPolyWorld';
 import { MultiplayerClient } from './game/multiplayerClient';
+import { sanitizeSyncedWorldState } from './game/multiplayerSync';
 import {
   applyOfflineProgress,
   applyWorldCommand,
@@ -130,7 +132,19 @@ export default function App() {
     startY: 0,
   });
 
-  const [phase, setPhase] = useState<GamePhase>('TITLE_MENU');
+  const initialQuery = useMemo(() => {
+    if (typeof window === 'undefined') return { sandbox: false, autostart: false };
+    const params = new URLSearchParams(window.location.search);
+    return {
+      sandbox: params.get('sandbox') === '1',
+      autostart: params.get('autostart') === '1',
+    };
+  }, []);
+
+  const [sandboxOpen, setSandboxOpen] = useState<boolean>(initialQuery.sandbox);
+  const [phase, setPhase] = useState<GamePhase>(
+    initialQuery.autostart && !initialQuery.sandbox ? 'PLAYING' : 'TITLE_MENU',
+  );
   const [hasSavedVillage, setHasSavedVillage] = useState<boolean>(Boolean(initialSaved));
   const [selectedMode, setSelectedMode] = useState<GameMode>(worldRef.current.gameMode);
   const [hud, setHud] = useState<HudSnapshot>(() => createHudSnapshot(worldRef.current));
@@ -199,7 +213,7 @@ export default function App() {
   mpPlayersRef.current = mpPlayers;
   const pressedKeysRef = useRef<Set<string>>(new Set());
 
-  const isInWorld = phase !== 'TITLE_MENU';
+  const isInWorld = phase !== 'TITLE_MENU' && !sandboxOpen;
 
   const getViewerHomeIsland = useCallback((): IslandId => {
     const me = mpPlayersRef.current.find((p) => p.id === mpPlayerIdRef.current);
@@ -373,11 +387,7 @@ export default function App() {
         showTempBanner(`Connected to Co-Op Room ${roomCode} — You guide ${ISLAND_DEFS[myHome]?.name ?? 'Cradle Isle'}`);
       },
       onWorldState: (world, players) => {
-        const localSettings = worldRef.current.settings;
-        world.settings.fpsCap = localSettings.fpsCap;
-        world.settings.muted = localSettings.muted;
-        world.settings.volume = localSettings.volume;
-        worldRef.current = world;
+        worldRef.current = sanitizeSyncedWorldState(world, worldRef.current.settings);
         mpPlayersRef.current = players;
         setMpPlayers(players);
       },
@@ -494,7 +504,12 @@ export default function App() {
       lastRenderTime = now;
 
       if (phaseRef.current === 'PLAYING') {
-        const simDt = Math.min(rawDt, 0.05) * (world.settings.simSpeed === 0 ? 0 : world.settings.simSpeed);
+        const effectiveSpeed = mpRoomCodeRef.current
+          ? 1
+          : world.settings.simSpeed === 0
+            ? 0
+            : world.settings.simSpeed;
+        const simDt = Math.min(rawDt, 0.05) * effectiveSpeed;
         animClock += simDt;
 
         // Solo mode runs local simulation; Multiplayer receives authoritative world ticks from server
@@ -1055,6 +1070,10 @@ export default function App() {
 
   const handleChangeSimSpeed = useCallback(
     (speed: 0 | 1 | 2 | 3) => {
+      if (mpRoomCodeRef.current) {
+        setStatusFeedback('Simulation pace is locked at 1× in multiplayer.');
+        return;
+      }
       dispatchCommand({ kind: 'set_speed', speed });
     },
     [dispatchCommand],
@@ -1576,7 +1595,9 @@ export default function App() {
       const key = lower;
       if (e.key === ' ') {
         e.preventDefault();
-        handleChangeSimSpeed(worldRef.current.settings.simSpeed === 0 ? 1 : 0);
+        if (!mpRoomCodeRef.current) {
+          handleChangeSimSpeed(worldRef.current.settings.simSpeed === 0 ? 1 : 0);
+        }
         return;
       }
       if (key === 'm') {
@@ -1715,6 +1736,17 @@ export default function App() {
     [mpPlayers, mpPlayerId],
   );
 
+  if (sandboxOpen) {
+    return (
+      <SandboxView
+        onBackToTitle={() => {
+          setSandboxOpen(false);
+          setPhase('TITLE_MENU');
+        }}
+      />
+    );
+  }
+
   if (phase === 'TITLE_MENU') {
     return (
       <TitleScreen
@@ -1727,6 +1759,7 @@ export default function App() {
         onNewVillage={handleNewVillage}
         onHostMultiplayer={handleHostMultiplayer}
         onJoinMultiplayer={handleJoinMultiplayer}
+        onOpenSandbox={() => setSandboxOpen(true)}
         mpConnecting={mpConnecting}
         mpError={mpError}
       />
@@ -1862,6 +1895,7 @@ export default function App() {
             onSpawnVillager={handleSpawnVillager}
             onUnlockAllTech={handleUnlockAllTech}
             onFocusIsland={(islandId) => handleFocusIsland(islandId)}
+            onInspectVillager={handleFocusVillager}
             onClose={() => setActiveDrawer(null)}
           />
         )}

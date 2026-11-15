@@ -31,6 +31,55 @@ import {
 } from './catalog';
 import { buildArchipelagoLandmarks } from './lowPolyWorld';
 import {
+  addToVillagerInventory,
+  canBuildCottage,
+  deliverMaterialsForStage,
+  depositCarriedToVillage,
+  getCarryCap,
+  getConstructionStageForRatio,
+  harvestWildNode,
+  hasFoundationResources,
+  initStagedBuildingMaterials,
+  tickWildNodeRegrowth,
+  villageNeedsHousing,
+} from './economy';
+import { emitWorldEvent, mapChronicleKindToEventCategory } from './eventBus';
+import {
+  advanceKnowledge,
+  createKnowledgeProfile,
+  ensureVillagerKnowledge,
+} from './knowledge';
+import {
+  checkTargetReachability,
+  classifyMainWorldTerrain,
+  findBridgeStepNav,
+  findCablewayStepNav,
+  isOnBuiltBridgeNav,
+  steerMainWorldEntity,
+} from './navigation';
+import {
+  ensureGovernanceArrays,
+  recordPositiveContribution,
+  spreadIncidentRumor,
+  tickGovernance,
+} from './governance';
+import {
+  dispatchMigrantBoat,
+  getGreetingVillagerForIsland,
+  getMigrantLandingPoint,
+  sendMigrantBoatAway,
+  tickMigrantBoatLifecycle,
+} from './migration';
+import { evaluateVillagerDecision } from './npcBrain';
+import { buildNpcPersonality, getNpcPersonality, recordNpcMemory } from './personality';
+import { ensureWildAnimalState, stepWildAnimalBehavior } from './wildlife';
+import {
+  ensureSocialRecord,
+  processBonfireSocialCircle,
+  processDirectSocialShift,
+  processSocialEncounter,
+} from './social';
+import {
   BUILDING_BLUEPRINTS,
   CROP_META,
   CULTURES,
@@ -371,24 +420,7 @@ function isBridgePassable(world: WorldState, from: IslandId, to: IslandId): SkyB
 }
 
 function findBridgeStep(world: WorldState, from: IslandId, to: IslandId): SkyBridgeEntity | null {
-  const direct = isBridgePassable(world, from, to);
-  if (direct) return direct;
-  // BFS up to 3 hops across built sky-bridges
-  const queue: { id: IslandId; firstBridge: SkyBridgeEntity | null }[] = [{ id: from, firstBridge: null }];
-  const visited = new Set<IslandId>([from]);
-  while (queue.length > 0) {
-    const curr = queue.shift()!;
-    if (curr.id === to) return curr.firstBridge;
-    for (const br of world.bridges) {
-      if (!br.built) continue;
-      const nextId = br.fromIsland === curr.id ? br.toIsland : br.toIsland === curr.id ? br.fromIsland : null;
-      if (nextId && !visited.has(nextId)) {
-        visited.add(nextId);
-        queue.push({ id: nextId, firstBridge: curr.firstBridge ?? br });
-      }
-    }
-  }
-  return null;
+  return findBridgeStepNav(world, from, to);
 }
 
 function islandNormalizedDist(island: IslandDef, wx: number, wy: number): number {
@@ -400,93 +432,11 @@ function islandNormalizedDist(island: IslandDef, wx: number, wy: number): number
 }
 
 function isOnBuiltBridge(world: WorldState, x: number, y: number): SkyBridgeEntity | null {
-  for (const br of world.bridges) {
-    if (!br.built) continue;
-    const vx = br.x2 - br.x1;
-    const vy = br.y2 - br.y1;
-    const len2 = vx * vx + vy * vy;
-    if (len2 < 1) continue;
-    const t = Math.max(0, Math.min(1, ((x - br.x1) * vx + (y - br.y1) * vy) / len2));
-    const px = br.x1 + t * vx;
-    const py = br.y1 + t * vy;
-    if (Math.hypot(x - px, y - py) <= 28) return br;
-  }
-  return null;
-}
-
-function clampToWalkableSurface(
-  world: WorldState,
-  currentIslandId: IslandId,
-  nx: number,
-  ny: number,
-): { x: number; y: number; islandId: IslandId; hitEdge: boolean } {
-  const onBridge = isOnBuiltBridge(world, nx, ny);
-  const insideAny = getIslandAtPoint(nx, ny, onBridge ? 0 : 26);
-  if (insideAny) {
-    return { x: nx, y: ny, islandId: insideAny.id, hitEdge: false };
-  }
-  if (onBridge) {
-    return { x: nx, y: ny, islandId: currentIslandId, hitEdge: false };
-  }
-  // Clamp back inside current island rim
-  const isl = ISLAND_DEFS[currentIslandId];
-  const rx = Math.max(30, isl.radiusX - 30);
-  const ry = Math.max(30, isl.radiusY - 30);
-  const dx = nx - isl.centerX;
-  const dy = ny - isl.centerY;
-  const ang = Math.atan2(dy, dx);
-  const wobble = islandCoastWobble(isl, ang);
-  const norm = Math.hypot(dx / rx, dy / ry) / Math.max(0.4, wobble);
-  if (norm > 1) {
-    return {
-      x: isl.centerX + dx / norm,
-      y: isl.centerY + dy / norm,
-      islandId: currentIslandId,
-      hitEdge: true,
-    };
-  }
-  return { x: nx, y: ny, islandId: currentIslandId, hitEdge: false };
+  return isOnBuiltBridgeNav(world, x, y);
 }
 
 function findCablewayStep(world: WorldState, from: IslandId, to: IslandId): SkyCablewayEntity | null {
-  return (
-    world.cableways.find(
-      (cb) =>
-        cb.built &&
-        ((cb.fromIsland === from && cb.toIsland === to) ||
-          (cb.fromIsland === to && cb.toIsland === from)),
-    ) ?? null
-  );
-}
-
-function resolveRadialObstacle(
-  nx: number,
-  ny: number,
-  ox: number,
-  oy: number,
-  minRadius: number,
-  dirX: number,
-  dirY: number,
-  slideFactor = 0.25,
-): { x: number; y: number } {
-  const rdx = nx - ox;
-  const rdy = ny - oy;
-  const dist = Math.hypot(rdx, rdy);
-  if (dist >= minRadius) return { x: nx, y: ny };
-  if (dist < 0.01) {
-    return { x: ox + minRadius, y: oy };
-  }
-  const ux = rdx / dist;
-  const uy = rdy / dist;
-  const push = minRadius - dist;
-  // Tangential slide clockwise or counterclockwise depending on travel direction
-  const tx = -uy;
-  const ty = ux;
-  const sign = dirX * tx + dirY * ty >= 0 ? 1 : -1;
-  return {
-    x: nx + ux * push + tx * sign * push * slideFactor,
-    y: ny + uy * push + ty * sign * slideFactor,
-  };
+  return findCablewayStepNav(world, from, to);
 }
 
 function steerEntity(
@@ -500,205 +450,30 @@ function steerEntity(
   ignoreSpring = false,
   stuckState?: EntityStuckState,
   dt = 0.05,
-): { x: number; y: number; islandId: IslandId; facing: 1 | -1; hitEdge: boolean; wasStuckReset?: boolean } {
-  const destIsland = getIslandAtPoint(tx, ty, 6)?.id ?? islandId;
-  let navX = tx;
-  let navY = ty;
-  let crossingBridge = false;
-
-  if (destIsland !== islandId) {
-    const br = findBridgeStep(world, islandId, destIsland);
-    if (br) {
-      crossingBridge = true;
-      const fromIs1 = br.fromIsland === islandId;
-      const enterX = fromIs1 ? br.x1 : br.x2;
-      const enterY = fromIs1 ? br.y1 : br.y2;
-      const exitX = fromIs1 ? br.x2 : br.x1;
-      const exitY = fromIs1 ? br.y2 : br.y1;
-      const onThisBridge = isOnBuiltBridge(world, x, y)?.id === br.id;
-      if (!onThisBridge && Math.hypot(x - enterX, y - enterY) > 18) {
-        navX = enterX;
-        navY = enterY;
-      } else {
-        navX = exitX;
-        navY = exitY;
-      }
-    } else {
-      const cb = findCablewayStep(world, islandId, destIsland);
-      if (cb) {
-        navX = cb.fromIsland === islandId ? cb.x1 : cb.x2;
-        navY = cb.fromIsland === islandId ? cb.y1 : cb.y2;
-      } else {
-        const pad = world.buildings.find((b) => b.islandId === islandId && b.type === 'glider_pad' && b.unlocked);
-        if (pad) {
-          navX = pad.x;
-          navY = pad.y;
-        } else {
-          const isl = ISLAND_DEFS[islandId];
-          navX = isl.dockSpot.x;
-          navY = isl.dockSpot.y;
-        }
-      }
-    }
-  }
-
-  let dx = navX - x;
-  let dy = navY - y;
-  const d = Math.hypot(dx, dy);
-  if (d < 0.01) return { x, y, islandId, facing: 1, hitEdge: false };
-
-  let wasStuckReset = false;
-  if (stuckState) {
-    if (d > 14) {
-      stuckState.timer += dt;
-      if (stuckState.timer >= 0.7) {
-        const moved = Math.hypot(x - stuckState.lastX, y - stuckState.lastY);
-        if (moved < 3.5) {
-          // Rotate steering 75° around obstacle using detourSign
-          const ang = Math.atan2(dy, dx) + stuckState.detourSign * 1.3;
-          dx = Math.cos(ang) * d;
-          dy = Math.sin(ang) * d;
-          if (stuckState.timer >= 2.2) {
-            stuckState.detourSign = stuckState.detourSign === 1 ? -1 : 1;
-            stuckState.timer = 0;
-            stuckState.lastX = x;
-            stuckState.lastY = y;
-            wasStuckReset = true;
-          }
-        } else {
-          stuckState.timer = 0;
-          stuckState.lastX = x;
-          stuckState.lastY = y;
-        }
-      }
-    } else {
-      stuckState.timer = 0;
-      stuckState.lastX = x;
-      stuckState.lastY = y;
-    }
-  }
-
-  const dirX = dx / d;
-  const dirY = dy / d;
-  const move = Math.min(d, stepDist);
-  let nx = x + dirX * move;
-  let ny = y + dirY * move;
-
-  const onBridgeNow = Boolean(isOnBuiltBridge(world, nx, ny));
-  if (!onBridgeNow) {
-    // 1. Buildings (rounded elliptical push-out + tangential slide)
-    for (const b of world.buildings) {
-      if (b.islandId !== islandId) continue;
-      if (!b.unlocked && world.activeConstruction?.buildingId !== b.id) continue;
-      if (b.type === 'farm_plot' || b.type === 'pasture' || b.type === 'dock') continue;
-      const fp = BUILDING_BLUEPRINTS[b.type]?.footprint ?? { rx: 16, ry: 14 };
-      const padX = fp.rx + 4;
-      const padY = fp.ry + 4;
-      const ex = (nx - b.x) / padX;
-      const ey = (ny - b.y) / padY;
-      const eDist = Math.hypot(ex, ey);
-      if (eDist < 1) {
-        if (eDist < 0.01) {
-          nx = b.x + padX;
-        } else {
-          const ux = ex / eDist;
-          const uy = ey / eDist;
-          const slideX = -uy;
-          const slideY = ux;
-          const sign = stuckState ? stuckState.detourSign : dirX * slideX + dirY * slideY >= 0 ? 1 : -1;
-          nx = b.x + (ux + slideX * sign * 0.42) * padX;
-          ny = b.y + (uy + slideY * sign * 0.42) * padY;
-        }
-      }
-    }
-
-    // 2. Wild trees, ore veins, bushes, flint & branch piles
-    for (const n of world.wildNodes) {
-      if (n.islandId !== islandId || n.amount <= 0.1) continue;
-      const rad =
-        n.kind === 'tree'
-          ? (n.scale ?? 1) * 14
-          : n.kind === 'copper_vein' || n.kind === 'iron_vein'
-            ? 18
-            : 11;
-      const res = resolveRadialObstacle(nx, ny, n.x, n.y, rad, dirX, dirY, 0.48);
-      nx = res.x;
-      ny = res.y;
-    }
-
-    // 3. Static world landmarks (boulders, monoliths, cairns, crystal spires)
-    for (const lm of ARCHIPELAGO_LANDMARKS) {
-      if (lm.islandId !== islandId) continue;
-      if (lm.kind === 'reed_clump' || lm.kind === 'sky_islet') continue;
-      const res = resolveRadialObstacle(nx, ny, lm.x, lm.y, lm.scale * 16, dirX, dirY, 0.48);
-      nx = res.x;
-      ny = res.y;
-    }
-
-    // 4. Explore Ruins & Memorial stones
-    for (const ruin of world.exploreRuins) {
-      if (ruin.islandId !== islandId) continue;
-      const res = resolveRadialObstacle(nx, ny, ruin.x, ruin.y, 24, dirX, dirY, 0.45);
-      nx = res.x;
-      ny = res.y;
-    }
-    for (const mem of world.memorials) {
-      if (mem.islandId !== islandId) continue;
-      const res = resolveRadialObstacle(nx, ny, mem.x, mem.y, 11, dirX, dirY, 0.35);
-      nx = res.x;
-      ny = res.y;
-    }
-
-    // 5. Water springs
-    const islDef = ISLAND_DEFS[islandId];
-    if (!ignoreSpring && islDef.hasSpring && islDef.springOffset) {
-      const sx = islDef.centerX + islDef.springOffset.dx;
-      const sy = islDef.centerY + islDef.springOffset.dy;
-      const res = resolveRadialObstacle(nx, ny, sx, sy, 24, dirX, dirY, 0.4);
-      nx = res.x;
-      ny = res.y;
-    }
-
-    // 6. Soft crowd separation between nearby characters
-    for (const other of world.villagers) {
-      if (other.islandId !== islandId || other.voyageBoatId || other.transitGliderId || other.transitCableId) continue;
-      if (Math.abs(other.x - x) < 0.5 && Math.abs(other.y - y) < 0.5) continue;
-      const od = Math.hypot(nx - other.x, ny - other.y);
-      if (od > 0.2 && od < 10.5) {
-        const push = (10.5 - od) * 0.4;
-        nx += ((nx - other.x) / od) * push;
-        ny += ((ny - other.y) / od) * push;
-      }
-    }
-  }
-
-  // Soft cliff-rim acknowledgement when not crossing a built bridge
-  let edgeDetected = false;
-  if (!crossingBridge && !isOnBuiltBridge(world, nx, ny)) {
-    const isl = ISLAND_DEFS[islandId];
-    const nd = islandNormalizedDist(isl, nx, ny);
-    if (nd >= 0.88) {
-      edgeDetected = true;
-      const toCenterX = isl.centerX - nx;
-      const toCenterY = isl.centerY - ny;
-      const cd = Math.hypot(toCenterX, toCenterY) || 1;
-      nx = x + (toCenterX / cd) * move * 0.65;
-      ny = y + (toCenterY / cd) * move * 0.65;
-    }
-  }
-
-  const clamped = clampToWalkableSurface(world, islandId, nx, ny);
-  return {
-    x: clamped.x,
-    y: clamped.y,
-    islandId: clamped.islandId,
-    facing: dx >= 0 ? 1 : -1,
-    hitEdge: edgeDetected || clamped.hitEdge,
-    wasStuckReset,
-  };
+  selfId?: string,
+) {
+  return steerMainWorldEntity(
+    world,
+    islandId,
+    x,
+    y,
+    tx,
+    ty,
+    stepDist,
+    ignoreSpring,
+    stuckState,
+    dt,
+    ARCHIPELAGO_LANDMARKS,
+    selfId,
+  );
 }
 
-function addChronicle(world: WorldState, text: string, kind: ChronicleEntry['kind']) {
+function addChronicle(
+  world: WorldState,
+  text: string,
+  kind: ChronicleEntry['kind'],
+  meta?: { islandId?: IslandId; participantIds?: string[] },
+) {
   world.chronicle.unshift({
     id: `chr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     day: world.environment.dayCount,
@@ -708,6 +483,14 @@ function addChronicle(world: WorldState, text: string, kind: ChronicleEntry['kin
   if (world.chronicle.length > 42) {
     world.chronicle.length = 42;
   }
+  const mapped = mapChronicleKindToEventCategory(kind);
+  emitWorldEvent(world, {
+    category: mapped.category,
+    significance: mapped.significance,
+    summary: text,
+    islandId: meta?.islandId ?? world.localHomeIslandId ?? 'cradle',
+    participantIds: meta?.participantIds ?? [],
+  });
 }
 
 export function getTraitStats(v: VillagerEntity) {
@@ -1067,6 +850,21 @@ function buildInitialWildHerds(): WildHerdEntity[] {
     color: string,
   ) => {
     const isl = ISLAND_DEFS[islandId];
+    let sx = isl.centerX + dx;
+    let sy = isl.centerY + dy;
+    if (classifyMainWorldTerrain({ bridges: [] }, sx, sy) === 'deep_water') {
+      for (let step = 1; step <= 12; step++) {
+        const ang = (step / 12) * Math.PI * 2;
+        const rScale = step <= 6 ? 0.45 : 0.25;
+        const cx = isl.centerX + Math.cos(ang) * isl.radiusX * rScale;
+        const cy = isl.centerY + Math.sin(ang) * isl.radiusY * rScale;
+        if (classifyMainWorldTerrain({ bridges: [] }, cx, cy) !== 'deep_water') {
+          sx = Math.round(cx);
+          sy = Math.round(cy);
+          break;
+        }
+      }
+    }
     const scale =
       kind === 'boar'
         ? Number((0.95 + Math.random() * 0.37).toFixed(2))
@@ -1078,10 +876,10 @@ function buildInitialWildHerds(): WildHerdEntity[] {
       id,
       kind,
       islandId,
-      x: isl.centerX + dx,
-      y: isl.centerY + dy,
-      targetX: isl.centerX + dx + 45,
-      targetY: isl.centerY + dy,
+      x: sx,
+      y: sy,
+      targetX: sx + 35,
+      targetY: sy,
       facing: 1,
       pauseTimer: Math.random() * 2,
       hp,
@@ -1114,7 +912,7 @@ function buildInitialWildHerds(): WildHerdEntity[] {
   spawn('wild_b3', 'boar', 'coppercrag', 95, -45, '#56433B');
 
   // Starbloom Ruins: deer & rabbits
-  spawn('wild_r5', 'rabbit', 'starbloom', -145, 95, '#EAE2D6');
+  spawn('wild_r5', 'rabbit', 'starbloom', 110, 95, '#EAE2D6');
   spawn('wild_d7', 'deer', 'starbloom', 165, -95, '#A67249');
 
   // Frostpeak Glacier: white-pelt deer & fierce mountain boar
@@ -1122,7 +920,7 @@ function buildInitialWildHerds(): WildHerdEntity[] {
   spawn('wild_b4', 'boar', 'frostpeak', 145, -60, '#5B5654');
 
   // Ashen Bastion: scorched boar
-  spawn('wild_b5', 'boar', 'embervault', -210, 130, '#3C2D28');
+  spawn('wild_b5', 'boar', 'embervault', 135, -75, '#3C2D28');
 
   return herds;
 }
@@ -1238,6 +1036,25 @@ function makeFounder(
     attackCooldown: 0,
     edgeAckCooldown: 0,
     stuckState: { lastX: cradle.centerX + dx, lastY: cradle.centerY + dy, timer: 0, detourSign: 1 },
+    personality: buildNpcPersonality(id, traits, traits.includes('curious_scout') ? 0.88 : 0.72, traits.includes('brave_hunter') ? 0.78 : 0.55, false),
+    knowledge: createKnowledgeProfile('awakening'),
+    memories: [
+      {
+        id: `mem_init_${id}`,
+        day: 1,
+        timeOfDay: 0.25,
+        kind: 'discovery',
+        summary: 'Opened eyes bare-handed under an endless sky.',
+        actorIds: [],
+        importance: 8,
+        sentiment: 'positive',
+      },
+    ],
+    carriedResource: null,
+    carriedAmount: 0,
+    carryCapacity: 6,
+    reputation: 15,
+    banished: false,
   };
 }
 
@@ -1344,6 +1161,25 @@ function makeNativeClanVillager(
     attackCooldown: 0,
     edgeAckCooldown: 0,
     stuckState: { lastX: isl.centerX + dx, lastY: isl.centerY + dy, timer: 0, detourSign: 1 },
+    personality: buildNpcPersonality(id, traits, 0.55, 0.72, isAshen),
+    knowledge: createKnowledgeProfile('native'),
+    memories: [
+      {
+        id: `mem_init_${id}`,
+        day: 1,
+        timeOfDay: 0.25,
+        kind: 'social',
+        summary: `Raised among the ${CULTURES[cultureId].name} on ${isl.name}.`,
+        actorIds: [],
+        importance: 6,
+        sentiment: 'neutral',
+      },
+    ],
+    carriedResource: null,
+    carriedAmount: 0,
+    carryCapacity: 6,
+    reputation: isAshen ? -15 : 22,
+    banished: false,
   };
 }
 
@@ -1782,9 +1618,11 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
     adam.weaponType = 'flint_spear';
     adam.gearTier = 1;
     adam.cognition = { stage: 'reasoning', awareness: 65, observedConcepts: ['berry_bush', 'stone_boulder', 'embers'], socialCount: 2, focusObject: null };
+    adam.knowledge = createKnowledgeProfile('veteran');
     eve.weaponType = 'bow';
     eve.gearTier = 1;
     eve.cognition = { stage: 'reasoning', awareness: 65, observedConcepts: ['berry_bush', 'stone_boulder', 'embers'], socialCount: 2, focusObject: null };
+    eve.knowledge = createKnowledgeProfile('veteran');
 
     const bram = makeFounder(
       'founder_bram',
@@ -1800,6 +1638,7 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
     bram.weaponType = 'flint_spear';
     bram.gearTier = 1;
     bram.cognition = { stage: 'reasoning', awareness: 65, observedConcepts: ['berry_bush', 'stone_boulder', 'embers'], socialCount: 2, focusObject: null };
+    bram.knowledge = createKnowledgeProfile('veteran');
 
     const clara = makeFounder(
       'founder_clara',
@@ -1815,6 +1654,7 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
     clara.weaponType = 'bow';
     clara.gearTier = 1;
     clara.cognition = { stage: 'reasoning', awareness: 65, observedConcepts: ['berry_bush', 'stone_boulder', 'embers'], socialCount: 2, focusObject: null };
+    clara.knowledge = createKnowledgeProfile('veteran');
 
     initialVillagers.push(bram, clara);
   }
@@ -2017,6 +1857,25 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
         kind: 'era',
       },
     ],
+    eventLog: [
+      {
+        id: 'ev_init_1',
+        day: 1,
+        timeOfDay: 0.36,
+        category: 'migration',
+        significance: 'notable',
+        summary: isSovereign
+          ? 'Sovereign Sandbox opened over 8 floating islands.'
+          : isSiege
+            ? 'Defenders rallied on Cradle Isle against the coming siege.'
+            : 'Adam and Eve awakened with empty hands on Cradle Isle.',
+        islandId: 'cradle',
+        participantIds: initialVillagers.map((v) => v.id),
+      },
+    ],
+    communityRules: [],
+    incidents: [],
+    disputes: [],
     completedAspirations: [],
     chiefId: null,
     chiefFocus: isSiege ? 'defense' : 'balanced',
@@ -2079,7 +1938,12 @@ export function createInitialWorld(gameMode: GameMode = 'whisper_solo'): WorldSt
   for (const v of [...world.villagers, ...world.clanVillagers]) {
     upsertLineage(world, v);
   }
+  ensureSocialRecord(world, adam, eve);
+  ensureSocialRecord(world, eve, adam);
   syncCombinedFood(world);
+  for (const v of world.villagers) {
+    v.decisionTrace = evaluateVillagerDecision(world, v).trace;
+  }
   return world;
 }
 
@@ -2108,6 +1972,10 @@ export function normalizeWorldState(raw: WorldState): WorldState {
     clanVillagers: Array.isArray(raw.clanVillagers) ? raw.clanVillagers : base.clanVillagers,
     raiders: Array.isArray(raw.raiders) ? raw.raiders : base.raiders,
     siege: raw.siege ?? base.siege,
+    eventLog: Array.isArray(raw.eventLog) ? raw.eventLog.slice(0, 200) : [],
+    communityRules: Array.isArray(raw.communityRules) ? raw.communityRules : [],
+    incidents: Array.isArray(raw.incidents) ? raw.incidents : [],
+    disputes: Array.isArray(raw.disputes) ? raw.disputes : [],
     settings: {
       fpsCap: raw.settings?.fpsCap ?? 60,
       simSpeed: (raw.settings?.simSpeed ?? 1) as 0 | 1 | 2 | 3,
@@ -2137,9 +2005,54 @@ export function normalizeWorldState(raw: WorldState): WorldState {
     if (!v.skillXp) v.skillXp = {};
     if (v.rtsOrder === undefined) v.rtsOrder = null;
     if (v.drafted === undefined) v.drafted = false;
+    getNpcPersonality(v);
+    ensureVillagerKnowledge(v, true);
+    if (!Array.isArray(v.memories) || v.memories.length === 0) {
+      v.memories = v.lastMemory
+        ? [
+            {
+              id: `mem_norm_${v.id}`,
+              day: merged.environment.dayCount,
+              timeOfDay: merged.environment.timeOfDay,
+              kind: 'discovery',
+              summary: v.lastMemory,
+              actorIds: [],
+              importance: 5,
+              sentiment: 'neutral',
+            },
+          ]
+        : [];
+    }
+    if (typeof v.carryCapacity !== 'number') v.carryCapacity = 6;
+    if (typeof v.carriedAmount !== 'number') v.carriedAmount = 0;
+    if (v.carriedResource === undefined) v.carriedResource = null;
+    if (typeof v.reputation !== 'number') v.reputation = v.isStranger ? -15 : 15;
+    if (v.banished === undefined) v.banished = false;
+    if (typeof v.offenseCount !== 'number') v.offenseCount = 0;
+    if (typeof v.contributionCount !== 'number') v.contributionCount = 0;
+    if (!Array.isArray(v.knownIncidentIds)) v.knownIncidentIds = [];
+    if (!Array.isArray(v.rumorIncidentIds)) v.rumorIncidentIds = [];
     if (!v.isStranger) upsertLineage(merged, v);
   }
+  ensureGovernanceArrays(merged);
+  for (const b of merged.buildings) {
+    if (b.unlocked) {
+      b.constructionStage = 'complete';
+      b.pausedForMaterials = false;
+    } else {
+      b.constructionStage = b.constructionStage ?? 'foundation';
+      b.pausedForMaterials = Boolean(b.pausedForMaterials);
+    }
+  }
+  for (const h of merged.wildHerds) {
+    ensureWildAnimalState(h);
+  }
   syncCombinedFood(merged);
+  for (const v of merged.villagers) {
+    if (!v.decisionTrace) {
+      v.decisionTrace = evaluateVillagerDecision(merged, v).trace;
+    }
+  }
   return merged;
 }
 
@@ -2396,7 +2309,7 @@ function createBuildingInstance(
     isl.hasSpring && isl.springOffset
       ? Math.hypot(x - (isl.centerX + isl.springOffset.dx), y - (isl.centerY + isl.springOffset.dy)) < 120
       : false;
-  return {
+  const b: BuildingEntity = {
     id: `bld_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     type,
     name: type === 'farm_plot' ? `${CROP_META[cropType].label} Field` : type === 'pasture' ? `${LIVESTOCK_META[livestockKind].label} Pen` : bp.name,
@@ -2420,6 +2333,8 @@ function createBuildingInstance(
         : undefined,
     livestockKind: type === 'pasture' ? livestockKind : undefined,
   };
+  initStagedBuildingMaterials(b, bp.baseCost);
+  return b;
 }
 
 function spawnPastureLivestock(world: WorldState, pasture: BuildingEntity) {
@@ -2453,6 +2368,7 @@ function spawnDockBoat(world: WorldState, dock: BuildingEntity, kind: BoatKind) 
     fishing_skiff: 'Coastal Skiff',
     cargo_merchant: 'Archipelago Merchant',
     war_galley: 'Shielded Galley',
+    migrant_skiff: 'Migrant Skiff',
   };
   const maxHp = kind === 'war_galley' ? 240 : kind === 'cargo_merchant' ? 160 : 100;
   world.boats.push({
@@ -2781,17 +2697,14 @@ function pickNextAutonomousBuilding(world: WorldState, targetHomeIslandId?: Isla
       });
     }
 
-    // Tier 2: Housing & Shelter BEFORE workshops/quarries/libraries/smelteries
+    // Tier 2: Housing & Shelter BEFORE workshops/quarries/libraries/smelteries (strictly beds < pop)
     const homeCount = countIsleType('lean_to') + countIsleType('cottage');
-    const needsHousing = pop >= beds || beds - pop < 1 || homeCount === 0;
+    const needsHousing = villageNeedsHousing(pop, beds) || homeCount === 0;
     if (needsHousing) {
-      if (getTechUnlocked(world, 'carpentry') && hasResourcesFor(res, getBuildCost(BUILDING_BLUEPRINTS.cottage))) {
+      if (canBuildCottage(world, homeId) && hasFoundationResources(res, getBuildCost(BUILDING_BLUEPRINTS.cottage))) {
         priorities.push({ type: 'cottage', islandId: homeId });
       } else {
         priorities.push({ type: 'lean_to', islandId: homeId });
-      }
-      if (countIsleType('cottage') < Math.ceil(pop / 3)) {
-        priorities.push({ type: 'cottage', islandId: homeId });
       }
     }
 
@@ -2799,7 +2712,7 @@ function pickNextAutonomousBuilding(world: WorldState, targetHomeIslandId?: Isla
     const basicNeedsSecured =
       countIsleType('bonfire') > 0 &&
       (res.food >= Math.max(8, pop * 4) || countIsleType('farm_plot') >= 1) &&
-      beds >= pop &&
+      !villageNeedsHousing(pop, beds) &&
       homeCount > 0;
 
     if (basicNeedsSecured) {
@@ -2809,9 +2722,6 @@ function pickNextAutonomousBuilding(world: WorldState, targetHomeIslandId?: Isla
           islandId: homeId,
           cropType: countIsleType('farm_plot') === 0 ? 'turnip' : countIsleType('farm_plot') === 1 ? 'wheat' : 'herbs',
         });
-      }
-      if (countIsleType('cottage') < Math.ceil(pop / 3) + 1) {
-        priorities.push({ type: 'cottage', islandId: homeId });
       }
       if (countIsleType('woodshop') === 0) priorities.push({ type: 'woodshop', islandId: homeId });
       if (countIsleType('pasture') === 0) priorities.push({ type: 'pasture', islandId: homeId, livestockKind: 'sheep' });
@@ -2826,9 +2736,10 @@ function pickNextAutonomousBuilding(world: WorldState, targetHomeIslandId?: Isla
     }
 
     for (const cand of priorities) {
+      if (cand.type === 'cottage' && !canBuildCottage(world, cand.islandId)) continue;
       const bp = BUILDING_BLUEPRINTS[cand.type];
       if (!getTechUnlocked(world, bp.requiredTechId)) continue;
-      if (!hasResourcesFor(res, getBuildCost(bp))) continue;
+      if (!hasFoundationResources(res, getBuildCost(bp))) continue;
       const site = findValidSiteOnIsland(world, cand.islandId);
       if (!site) continue;
       return {
@@ -2855,12 +2766,37 @@ function tickAutonomousConstruction(
       world.activeConstruction = null;
       return;
     }
-    if (!builder || builder.lifeStage === 'infant') {
+    if (!builder || builder.lifeStage === 'infant' || builder.banished) {
       builder =
-        world.villagers.find((v) => v.lifeStage !== 'infant' && (v.homeIslandId ?? v.islandId) === b.islandId) ??
-        world.villagers.find((v) => v.lifeStage === 'adult' || v.lifeStage === 'elder');
+        world.villagers.find((v) => !v.banished && v.lifeStage !== 'infant' && (v.homeIslandId ?? v.islandId) === b.islandId) ??
+        world.villagers.find((v) => !v.banished && (v.lifeStage === 'adult' || v.lifeStage === 'elder'));
       if (!builder) return;
       ac.builderId = builder.id;
+    }
+
+    const matCheck = deliverMaterialsForStage(world, b, ac, syncCombinedFood);
+    if (!matCheck.gateMet) {
+      ac.progress = Math.min(ac.progress, Math.max(0, matCheck.nextGateRatio * ac.duration - 0.02));
+      ac.pausedForMaterials = true;
+      const carryingNeeded =
+        builder.carriedResource &&
+        (builder.carriedAmount ?? 0) > 0.05 &&
+        matCheck.missing.includes(builder.carriedResource);
+      if (carryingNeeded && builder.hunger >= 22) {
+        builder.targetX = b.x;
+        builder.targetY = b.y + 18;
+        builder.autonomyReason = `Hauling ${builder.carriedResource} to ${b.name} (${ac.stage ?? 'foundation'}).`;
+      } else {
+        if (builder.state === 'building') builder.state = 'working';
+        builder.autonomyReason = `Awaiting ${matCheck.missing.join(', ')} at ${b.name} (${ac.stage ?? 'foundation'}).`;
+      }
+      return;
+    }
+    ac.pausedForMaterials = false;
+
+    if (builder.hunger < 24 || builder.warmth < 20) {
+      if (builder.state === 'building') builder.state = 'resting';
+      return;
     }
 
     builder.targetX = b.x;
@@ -2868,11 +2804,13 @@ function tickAutonomousConstruction(
     const dist = Math.hypot(builder.x - b.x, builder.y - b.y);
     if (dist <= 38) {
       builder.state = 'building';
-      builder.autonomyReason = `${ac.isUpgrade ? 'Upgrading' : 'Building'} ${b.name}.`;
+      builder.autonomyReason = `${ac.isUpgrade ? 'Upgrading' : 'Building'} ${b.name} (${ac.stage ?? 'foundation'}).`;
       const cleverBoost = builder.traits.includes('clever_crafter') ? 1.3 : 1;
       const masonryMult = 1 + getSkillLevel(builder, 'masonry') * 0.08;
       const techBuildMult = getTechModifiers(world.unlockedTechIds).buildSpeedMult;
       ac.progress += dt * cleverBoost * masonryMult * (ac.isUpgrade ? techBuildMult : 1);
+      b.constructionStage = getConstructionStageForRatio(ac.progress / Math.max(0.1, ac.duration), b.unlocked);
+      ac.stage = b.constructionStage;
       gainSkillXp(world, builder, 'masonry', dt * 1.1);
 
       if (emitVisualParticles && Math.random() < dt * 2.2) {
@@ -2892,11 +2830,24 @@ function tickAutonomousConstruction(
 
       if (ac.progress >= ac.duration) {
         b.unlocked = true;
+        b.constructionStage = 'complete';
+        b.pausedForMaterials = false;
         b.level = Math.min(b.maxLevel, Math.max(1, b.level + 1));
         b.disrepair = 0;
         b.hp = b.maxHp;
         addVillageResource(world, b.islandId, 'hearthlight', 6);
         grantKnowledge(world, 6, particles, builder);
+        advanceKnowledge(builder, 'construction', 8);
+        recordPositiveContribution(world, builder, 'build', null, 5);
+        recordNpcMemory(builder, {
+          day: world.environment.dayCount,
+          timeOfDay: world.environment.timeOfDay,
+          kind: 'construction',
+          summary: `${ac.isUpgrade ? 'Upgraded' : 'Completed'} ${b.name} on ${ISLAND_DEFS[b.islandId].name}.`,
+          actorIds: [],
+          importance: 7,
+          sentiment: 'positive',
+        });
 
         if (!ac.isUpgrade && b.type === 'pasture') {
           spawnPastureLivestock(world, b);
@@ -2917,6 +2868,7 @@ function tickAutonomousConstruction(
           world,
           `${builder.name.split(' ')[0]} ${ac.isUpgrade ? `upgraded ${b.name} to Lv.${b.level}` : `completed ${b.name}`} on ${ISLAND_DEFS[b.islandId].name}.`,
           'build',
+          { islandId: b.islandId, participantIds: [builder.id] },
         );
         builder.thoughtBubble = 'Built!';
         builder.thoughtTimer = 3.2;
@@ -3084,8 +3036,7 @@ function tickAutonomousConstruction(
   if (nextPlan) {
     const bp = BUILDING_BLUEPRINTS[nextPlan.type];
     const cost = getBuildCost(bp);
-    if (!hasResourcesFor(getVillageRes(world, nextPlan.islandId), cost)) return;
-    spendVillageResources(world, nextPlan.islandId, cost);
+    if (!hasFoundationResources(getVillageRes(world, nextPlan.islandId), cost)) return;
 
     if (nextPlan.suggestionId) {
       world.placedSuggestions = world.placedSuggestions.filter((s) => s.id !== nextPlan.suggestionId);
@@ -3100,6 +3051,7 @@ function tickAutonomousConstruction(
       nextPlan.cropType ?? 'turnip',
       nextPlan.livestockKind ?? 'sheep',
     );
+    initStagedBuildingMaterials(building, cost);
     world.buildings.push(building);
 
     const builder =
@@ -3114,6 +3066,8 @@ function tickAutonomousConstruction(
       progress: 0,
       duration: Number((baseDur / buildSpeed).toFixed(2)),
       isUpgrade: false,
+      stage: 'foundation',
+      pausedForMaterials: false,
     };
     return;
   }
@@ -3145,104 +3099,35 @@ function tickAutonomousConstruction(
   }
 }
 
-function getDesiredNextBuildingCost(world: WorldState, homeId: IslandId): { type: BuildingType; cost: Partial<VillageResources> } | null {
-  const countType = (t: BuildingType) => world.buildings.filter((b) => b.islandId === homeId && b.type === t).length;
-  const pop = Math.max(1, world.villagers.filter((v) => (v.homeIslandId ?? v.islandId) === homeId).length);
-  const beds = getHousingBedsForIsland(world, homeId);
-  const checks: BuildingType[] =
-    pop >= beds || countType('lean_to') + countType('cottage') === 0
-      ? ['bonfire', 'farm_plot', 'lean_to', 'cottage', 'woodshop', 'quarry', 'dock', 'watchtower', 'library', 'smeltery', 'bakery', 'barracks']
-      : ['bonfire', 'farm_plot', 'lean_to', 'woodshop', 'quarry', 'cottage', 'dock', 'glider_pad', 'watchtower', 'library', 'smeltery', 'bakery', 'barracks'];
-  for (const t of checks) {
-    const bp = BUILDING_BLUEPRINTS[t];
-    if (!bp) continue;
-    if (!getTechUnlocked(world, bp.requiredTechId)) continue;
-    if (countType(t) === 0 || (t === 'farm_plot' && countType(t) < 2)) {
-      return { type: t, cost: getBuildCost(bp) };
-    }
-  }
-  return null;
-}
-
-function pickAutonomousTask(world: WorldState, v: VillagerEntity): TaskType {
-  const homeId = v.homeIslandId ?? v.islandId;
-  const res = getVillageRes(world, homeId);
-  syncCombinedFood(world);
-  const pop = Math.max(1, world.villagers.filter((u) => (u.homeIslandId ?? u.islandId) === homeId).length);
-  const atWar = world.diplomacy.mist_mariner.status === 'war' || world.raiders.some((r) => r.islandId === v.islandId);
-
-  if (atWar && (v.bravery > 0.52 || v.traits.includes('brave_hunter') || v.drafted) && getTaskAvailable(world, 'guard', homeId)) {
-    return 'guard';
-  }
-
-  // Tier 1 Food Survival Check: prioritize food security before timber/stone/craft
-  if (res.food < pop * 6) {
-    const foodChoices: TaskType[] = ['forage'];
-    if (getTaskAvailable(world, 'farm', homeId)) foodChoices.push('farm', 'farm');
-    if (getTaskAvailable(world, 'hunt', homeId)) foodChoices.push('hunt');
-    if (getTaskAvailable(world, 'fish', homeId)) foodChoices.push('fish');
-    if (getTaskAvailable(world, 'pasture', homeId)) foodChoices.push('pasture');
-    return foodChoices[Math.floor(Math.random() * foodChoices.length)];
-  }
-
-  // Tier 2/3 Smart resource-driven self-building: actively gather missing timber or stone for next shelter/building!
-  const desired = getDesiredNextBuildingCost(world, homeId);
-  if (desired) {
-    const needStone = (desired.cost.stone ?? 0) > res.stone;
-    const needTimber = (desired.cost.timber ?? 0) > res.timber;
-    if (needStone && needTimber) {
-      return Math.random() < 0.55 ? (getTaskAvailable(world, 'quarry', homeId) ? 'quarry' : 'gather_stone') : 'chop';
-    }
-    if (needStone) {
-      return getTaskAvailable(world, 'quarry', homeId) && Math.random() < 0.65 ? 'quarry' : 'gather_stone';
-    }
-    if (needTimber) {
-      return 'chop';
-    }
-  }
-
-  // Curious explorers scout undiscovered islands
-  const undiscovered = ISLAND_ORDER.filter((id) => !world.islands[id].discovered);
-  if (
-    undiscovered.length > 0 &&
-    (v.curiosity > 0.62 || v.activeWish === 'explore' || world.chiefFocus === 'explore') &&
-    (getTechUnlocked(world, 'rope_bridges') || getTechUnlocked(world, 'dugout_docks') || getTechUnlocked(world, 'wind_gliders')) &&
-    Math.random() < 0.32
-  ) {
-    return 'explore';
-  }
-
-  const pool: TaskType[] = ['forage', 'gather_stone', 'chop'];
-  if (getTaskAvailable(world, 'farm', homeId)) pool.push('farm', 'farm');
-  if (getTaskAvailable(world, 'hunt', homeId) && (v.bravery > 0.45 || world.chiefFocus === 'harvest')) pool.push('hunt');
-  if (getTaskAvailable(world, 'pasture', homeId)) pool.push('pasture');
-  if (getTaskAvailable(world, 'quarry', homeId)) pool.push('quarry', ...(world.chiefFocus === 'craft' ? (['quarry'] as TaskType[]) : []));
-  if (getTaskAvailable(world, 'fish', homeId)) pool.push('fish');
-  if (getTaskAvailable(world, 'bake', homeId) && res.grain >= 2) pool.push('bake');
-  if (getTaskAvailable(world, 'study', homeId)) pool.push('study', ...(world.chiefFocus === 'craft' ? (['study'] as TaskType[]) : []));
-  if (getTaskAvailable(world, 'smelt', homeId) && (res.copper >= 1 || res.iron >= 1)) pool.push('smelt');
-  if (getTaskAvailable(world, 'guard', homeId) && world.chiefFocus === 'defense') pool.push('guard');
-
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
 function assignTargetForTask(world: WorldState, v: VillagerEntity, task: TaskType) {
-  const sameIsland = (x: number, y: number, islId: IslandId) => {
-    v.targetX = x;
-    v.targetY = y;
-    if (islId !== v.islandId && !findBridgeStep(world, v.islandId, islId)) {
-      const dock = world.buildings.find((b) => b.islandId === v.islandId && b.type === 'dock' && b.unlocked);
-      if (dock) {
-        v.targetX = dock.x;
-        v.targetY = dock.y;
+  const sameIsland = (x: number, y: number, islId: IslandId): boolean => {
+    if (islId !== v.islandId) {
+      const reach = checkTargetReachability(world, v.islandId, v.x, v.y, x, y, ARCHIPELAGO_LANDMARKS);
+      if (!reach.reachable) return false;
+      if (!findBridgeStep(world, v.islandId, islId)) {
+        const dock = world.buildings.find((b) => b.islandId === v.islandId && b.type === 'dock' && b.unlocked);
+        if (dock) {
+          v.targetX = dock.x;
+          v.targetY = dock.y;
+          return true;
+        }
+        return false;
       }
     }
+    v.targetX = x;
+    v.targetY = y;
+    return true;
   };
 
   if (task === 'forage') {
     const node =
-      world.wildNodes.find((n) => n.islandId === v.islandId && n.amount > 0.1 && (n.kind === 'berry_bush' || n.kind === 'branch_pile')) ??
-      world.wildNodes.find((n) => world.islands[n.islandId].discovered && n.amount > 0.1 && n.kind === 'berry_bush');
+      world.wildNodes.find(
+        (n) =>
+          n.islandId === v.islandId &&
+          n.amount > 0.05 &&
+          (n.kind === 'berry_bush' || n.kind === 'flint_pile' || n.kind === 'branch_pile'),
+      ) ??
+      world.wildNodes.find((n) => world.islands[n.islandId].discovered && n.amount > 0.05 && n.kind === 'berry_bush');
     if (node) {
       sameIsland(node.x + (Math.random() * 14 - 7), node.y + (Math.random() * 14 - 7), node.islandId);
       return;
@@ -3516,13 +3401,40 @@ function learnConcept(
     v.thoughtBubble = sharedFrom ? `Learned from ${sharedFrom}!` : info.bubble;
     v.thoughtTimer = 4.2;
     v.currentDialogue = info.dialogue;
-    v.lastMemory = sharedFrom ? `Learned about ${concept.replace('_', ' ')} from ${sharedFrom}.` : info.memory;
+    recordNpcMemory(v, {
+      day: world.environment.dayCount,
+      timeOfDay: world.environment.timeOfDay,
+      kind: 'discovery',
+      summary: sharedFrom ? `Learned about ${concept.replace('_', ' ')} from ${sharedFrom}.` : info.memory,
+      actorIds: [],
+      importance: 7,
+      sentiment: 'positive',
+    });
   } else {
     v.thoughtBubble = 'Hmm... interesting!';
     v.thoughtTimer = 2.6;
   }
 
-  grantKnowledge(world, isNew ? 3.5 : 0.8, particles);
+  const domainMap: Record<string, import('./types').KnowledgeDomainId> = {
+    berry_bush: 'foraging',
+    branch_pile: 'woodcraft',
+    tree: 'woodcraft',
+    flint_pile: 'toolmaking',
+    stone_boulder: 'stonecraft',
+    copper_vein: 'stonecraft',
+    iron_vein: 'toolmaking',
+    embers: 'firecraft',
+    volcano: 'firecraft',
+    spring: 'healing',
+    wildlife: 'foraging',
+    horizon: 'sailing',
+    glacier: 'sailing',
+    ruin: 'social_customs',
+  };
+  const domainId = domainMap[concept] ?? 'foraging';
+  advanceKnowledge(v, domainId, isNew ? (sharedFrom ? 5.5 : 8.5) : 1.6);
+
+  grantKnowledge(world, isNew ? 3.5 : 0.8, particles, v);
   spawnParticle(particles, {
     kind: 'sparkle',
     x: v.x,
@@ -3556,163 +3468,61 @@ function learnConcept(
 }
 
 function decideVillagerBehavior(world: WorldState, v: VillagerEntity) {
-  if (v.lifeStage === 'infant') {
-    const isl = ISLAND_DEFS[v.islandId];
-    const fire = getIslandBonfire(world, v.islandId);
-    v.state = 'sleeping';
-    v.targetX = (fire?.x ?? isl.centerX) + (Math.random() * 24 - 12);
-    v.targetY = (fire?.y ?? isl.centerY) + 18;
-    v.autonomyReason = 'Babbling softly and watching light beside the hearth.';
+  if (
+    world.activeConstruction &&
+    world.activeConstruction.builderId === v.id &&
+    !world.activeConstruction.pausedForMaterials &&
+    v.hunger >= 24 &&
+    v.warmth >= 20
+  ) {
     return;
   }
 
-  if (world.activeConstruction && world.activeConstruction.builderId === v.id) {
+  const decision = evaluateVillagerDecision(world, v);
+  v.decisionTrace = decision.trace;
+
+  if (decision.selectedAction === 'eat_comfort' && world.comforts[v.favoriteComfort] >= 1) {
+    world.comforts[v.favoriteComfort] -= 1;
+    v.hunger = Math.min(100, v.hunger + 44);
+    v.hp = Math.min(v.maxHp, v.hp + 10);
+    v.mood = Math.min(100, v.mood + 9);
+    v.state = 'eating';
+    v.autonomyReason = decision.autonomyReason;
+    v.thoughtBubble = `Warm ${v.favoriteComfort}!`;
+    v.thoughtTimer = 3;
+    advanceKnowledge(v, 'cooking', 1.2);
+    recordNpcMemory(v, {
+      day: world.environment.dayCount,
+      timeOfDay: world.environment.timeOfDay,
+      kind: 'survival',
+      summary: `Enjoyed ${COMFORT_LABELS[v.favoriteComfort].toLowerCase()} beside the hearth.`,
+      actorIds: [],
+      importance: 4,
+      sentiment: 'positive',
+    });
     return;
   }
 
-  const t = world.environment.timeOfDay;
-  const isNight = t < 0.21 || t > 0.83;
-  const isColdSeason = world.environment.season === 'winter' || world.environment.weather === 'snow';
-  const fire = getIslandBonfire(world, v.islandId);
-  const home = world.buildings.find(
-    (b) => b.unlocked && b.islandId === v.islandId && (b.type === 'cottage' || b.type === 'lean_to'),
-  );
-
-  // Seek warmth urgently if freezing
-  if (v.warmth < 32 || (isColdSeason && v.warmth < 52 && fire)) {
-    v.state = 'resting';
-    v.targetX = (fire?.x ?? home?.x ?? ISLAND_DEFS[v.islandId].centerX) + (Math.random() * 20 - 10);
-    v.targetY = (fire?.y ?? home?.y ?? ISLAND_DEFS[v.islandId].centerY) + 16;
-    v.autonomyReason = fire ? 'Warming cold hands beside the Bonfire.' : 'Huddling for warmth against the frost.';
-    return;
-  }
-
-  // Nightly Bonfire Bonding Ritual (dusk evening circle!)
-  const isDuskRitual = t >= 0.72 && t <= 0.89;
-  if (isDuskRitual && fire) {
-    const ang = (v.animPhase * 1.7 + (v.x + v.y) * 0.01) % (Math.PI * 2);
-    const rad = 46 + (v.hairStyle % 3) * 10;
-    v.state = 'socializing';
-    v.targetX = fire.x + Math.cos(ang) * rad;
-    v.targetY = fire.y + Math.sin(ang) * rad * 0.82;
-    v.autonomyReason = `Gathering by ${fire.name} for nightly stories & cultural bonding.`;
-    return;
-  }
-
-  // Sleep at night after bonfire circle
-  if (isNight && !v.traits.includes('resilient') && v.energy < 65) {
-    v.state = 'sleeping';
-    if (home) {
-      v.targetX = home.x;
-      v.targetY = home.y + 18;
-      v.autonomyReason = `Sleeping warmly inside ${home.name}.`;
-    } else if (fire) {
-      v.targetX = fire.x + (Math.random() * 24 - 12);
-      v.targetY = fire.y + 18;
-      v.autonomyReason = 'Dozing beside the open Bonfire.';
-    } else {
-      v.targetX = ISLAND_DEFS[v.islandId].centerX + (Math.random() * 34 - 17);
-      v.targetY = ISLAND_DEFS[v.islandId].centerY + 18;
-      v.autonomyReason = 'Resting beneath open stars.';
-    }
-    return;
-  }
-
-  // Eat when hungry (or pluck wild berries if awakening and hungry)
-  if (v.hunger < 45) {
-    if (world.comforts[v.favoriteComfort] >= 1) {
-      world.comforts[v.favoriteComfort] -= 1;
-      v.hunger = Math.min(100, v.hunger + 44);
-      v.hp = Math.min(v.maxHp, v.hp + 10);
-      v.mood = Math.min(100, v.mood + 9);
-      v.state = 'eating';
-      v.autonomyReason = `Savoring ${COMFORT_LABELS[v.favoriteComfort].toLowerCase()}.`;
-      v.thoughtBubble = `Warm ${v.favoriteComfort}!`;
-      v.thoughtTimer = 3;
-      return;
-    }
+  if (decision.selectedAction === 'eat_stockpile') {
     const foodRes = consumeFoodUnits(world, v.homeIslandId ?? v.islandId, 1);
     if (foodRes.ok) {
       v.hunger = Math.min(100, v.hunger + foodRes.hungerGain);
       v.mood = Math.max(5, Math.min(100, v.mood + foodRes.moodBonus));
       v.hp = Math.min(v.maxHp, v.hp + 4);
       v.state = 'eating';
-      v.autonomyReason = 'Eating from village food stores.';
-      return;
-    }
-    if (v.hunger < 26) {
-      v.activeTask = 'forage';
-      assignTargetForTask(world, v, 'forage');
-      v.state = 'walking';
-      v.autonomyReason = 'Instinctively hunting for sweet wild berries to ease hunger.';
+      v.autonomyReason = decision.autonomyReason;
       return;
     }
   }
 
-  // Children explore, play, and develop their minds before adulthood
-  if (v.lifeStage === 'child') {
-    if (Math.random() < 0.65) {
-      assignCognitiveExplorationTarget(world, v);
-    } else {
-      const isl = ISLAND_DEFS[v.islandId];
-      v.state = 'playing';
-      v.targetX = (fire?.x ?? isl.centerX) + (Math.random() * 90 - 45);
-      v.targetY = (fire?.y ?? isl.centerY) + (Math.random() * 70 - 35);
-      v.autonomyReason = 'Playing among wildflowers & skipping pebbles.';
-    }
-    return;
+  v.state = decision.activityState;
+  v.activeTask = decision.task;
+  v.targetX = decision.targetX;
+  v.targetY = decision.targetY;
+  v.autonomyReason = decision.autonomyReason;
+  if (decision.focusConcept) {
+    v.cognition.focusObject = decision.focusConcept;
   }
-
-  // Raiders threatening this island -> brave adults fight!
-  const nearbyRaider = world.raiders.find((r) => r.islandId === v.islandId && r.hp > 0);
-  if (nearbyRaider && (v.bravery > 0.5 || v.weaponType !== 'none' || v.activeTask === 'guard')) {
-    v.state = 'fighting';
-    v.targetX = nearbyRaider.x;
-    v.targetY = nearbyRaider.y;
-    v.autonomyReason = `Defending ${ISLAND_DEFS[v.islandId].name} from ${nearbyRaider.name.split(' ')[0]}!`;
-    return;
-  }
-
-  // COGNITIVE GATE (Exploration + Social stages before Work unless Sovereign assigned a role)
-  if (!canVillagerWork(world, v)) {
-    const needsSocial = v.cognition.socialCount < 2;
-    const peer = world.villagers.find(
-      (other) => other.id !== v.id && other.islandId === v.islandId && other.lifeStage !== 'infant',
-    );
-    if (needsSocial && peer && (v.cognition.observedConcepts.length >= 2 || Math.random() < 0.45)) {
-      v.state = 'socializing';
-      v.activeTask = 'explore';
-      v.targetX = peer.x + (Math.random() * 18 - 9);
-      v.targetY = peer.y + (Math.random() * 18 - 9);
-      v.autonomyReason = `Walking over to greet & learn with ${peer.name.split(' ')[0]} (${v.cognition.socialCount}/2 chats).`;
-      return;
-    }
-    assignCognitiveExplorationTarget(world, v);
-    return;
-  }
-
-  // Pick task (suggested or autonomous)
-  const stats = getTraitStats(v);
-  const homeId = v.homeIslandId ?? v.islandId;
-  let chosenTask: TaskType;
-  if (v.suggestedTask && getTaskAvailable(world, v.suggestedTask, homeId)) {
-    const acceptChance = Math.max(0.18, Math.min(0.95, stats.obedience + (v.mood > 70 ? 0.1 : -0.15)));
-    if (Math.random() <= acceptChance) {
-      chosenTask = v.suggestedTask;
-      v.autonomyReason = `${TASK_BY_ID[chosenTask].verb} (suggested).`;
-    } else {
-      chosenTask = pickAutonomousTask(world, v);
-      v.autonomyReason = `Chose to ${TASK_BY_ID[chosenTask].label.toLowerCase()} instead.`;
-    }
-  } else {
-    chosenTask = pickAutonomousTask(world, v);
-    v.autonomyReason = `${TASK_BY_ID[chosenTask].verb}.`;
-  }
-
-  v.activeTask = chosenTask;
-  assignTargetForTask(world, v, chosenTask);
-  const dist = Math.hypot(v.x - v.targetX, v.y - v.targetY);
-  v.state = chosenTask === 'hunt' ? 'hunting' : chosenTask === 'explore' ? 'exploring' : dist > 10 ? 'walking' : 'working';
 }
 
 function tickBoats(world: WorldState, dt: number, particles: Particle[], emitVisualParticles: boolean) {
@@ -3745,9 +3555,23 @@ function tickBoats(world: WorldState, dt: number, particles: Particle[], emitVis
     const dy = boat.targetY - boat.y;
     const dist = Math.hypot(dx, dy);
 
+    if (boat.kind === 'migrant_skiff') {
+      if (tickMigrantBoatLifecycle(world, boat, dt, world.boats, bi)) {
+        continue;
+      }
+      if (boat.state === 'docked') continue;
+    }
+
     if (dist > 6) {
       const boatSpeedMult = boat.cultureId === 'mist_mariner' ? 1 : getTechModifiers(world.unlockedTechIds).boatSpeedMult;
-      const spd = (boat.kind === 'fishing_skiff' ? 24 : boat.kind === 'cargo_merchant' ? 32 : 36) * boatSpeedMult;
+      const spd =
+        (boat.kind === 'fishing_skiff'
+          ? 24
+          : boat.kind === 'migrant_skiff'
+            ? 28
+            : boat.kind === 'cargo_merchant'
+              ? 32
+              : 36) * boatSpeedMult;
       boat.x += (dx / dist) * spd * dt;
       boat.y += (dy / dist) * spd * dt;
       boat.yaw = Math.atan2(-(boat.y - (boat.y - dy)), dx);
@@ -3985,9 +3809,17 @@ function tickFarmingAndPastures(world: WorldState, dt: number) {
         st.targetY = cy + (Math.random() * 18 - 9);
       } else {
         const step = Math.min(d, 10 * dt);
+        const nx = st.x + ((st.targetX - st.x) / d) * step;
+        const ny = st.y + ((st.targetY - st.y) / d) * step;
         st.facing = st.targetX >= st.x ? 1 : -1;
-        st.x += ((st.targetX - st.x) / d) * step;
-        st.y += ((st.targetY - st.y) / d) * step;
+        if (classifyMainWorldTerrain(world, nx, ny) !== 'deep_water') {
+          st.x = nx;
+          st.y = ny;
+        } else {
+          st.targetX = cx;
+          st.targetY = cy;
+          st.pauseTimer = 1;
+        }
       }
     }
 
@@ -4079,13 +3911,16 @@ function tickWildHerdsAndHunting(world: WorldState, dt: number, particles: Parti
     if (!h.stuckState) {
       h.stuckState = { lastX: h.x, lastY: h.y, timer: 0, detourSign: 1 };
     }
+    ensureWildAnimalState(h);
 
     // Aggro boar counter-attack!
     if (h.kind === 'boar' && h.aggroTargetId) {
       const preyV = world.villagers.find((v) => v.id === h.aggroTargetId && v.islandId === h.islandId);
       if (!preyV) {
         h.aggroTargetId = null;
+        h.behaviorState = 'wandering';
       } else {
+        h.behaviorState = 'fighting';
         const d = Math.hypot(preyV.x - h.x, preyV.y - h.y);
         if (d < 16) {
           if (Math.random() < dt * 0.9) {
@@ -4096,44 +3931,32 @@ function tickWildHerdsAndHunting(world: WorldState, dt: number, particles: Parti
             }
             if (died) {
               h.aggroTargetId = null;
+              h.behaviorState = 'wandering';
             }
           }
         } else if (d < 95) {
-          const step = steerEntity(world, h.islandId, h.x, h.y, preyV.x, preyV.y, 24 * dt, false, h.stuckState, dt);
-          h.x = step.x;
-          h.y = step.y;
-          h.facing = step.facing;
+          const step = steerEntity(world, h.islandId, h.x, h.y, preyV.x, preyV.y, 24 * dt, false, h.stuckState, dt, h.id);
+          if (classifyMainWorldTerrain(world, step.x, step.y) !== 'deep_water') {
+            h.x = step.x;
+            h.y = step.y;
+            h.facing = step.facing;
+          }
+          if (step.wasStuckReset) {
+            h.aggroTargetId = null;
+            h.behaviorState = 'wandering';
+          }
           continue;
         } else {
           h.aggroTargetId = null;
+          h.behaviorState = 'wandering';
         }
       }
     }
 
-    // Normal roam with cliff-edge & stuck-reset recovery
-    if (h.pauseTimer > 0) {
-      h.pauseTimer -= dt;
-    } else {
-      const dist = Math.hypot(h.targetX - h.x, h.targetY - h.y);
-      if (dist < 6) {
-        h.pauseTimer = 2 + Math.random() * 4;
-        const isl = ISLAND_DEFS[h.islandId];
-        h.targetX = isl.centerX + (Math.random() * 2 - 1) * (isl.radiusX * 0.64);
-        h.targetY = isl.centerY + (Math.random() * 2 - 1) * (isl.radiusY * 0.62);
-      } else {
-        const spd = h.kind === 'rabbit' ? 14 : h.kind === 'deer' ? 18 : 13;
-        const step = steerEntity(world, h.islandId, h.x, h.y, h.targetX, h.targetY, spd * dt, false, h.stuckState, dt);
-        h.x = step.x;
-        h.y = step.y;
-        h.facing = step.facing;
-        if (step.hitEdge || step.wasStuckReset) {
-          h.pauseTimer = 0.6;
-          const isl = ISLAND_DEFS[h.islandId];
-          h.targetX = isl.centerX + (Math.random() * 2 - 1) * (isl.radiusX * 0.55);
-          h.targetY = isl.centerY + (Math.random() * 2 - 1) * (isl.radiusY * 0.55);
-        }
-      }
-    }
+    // Autonomous Animal Needs (hunger, thirst, shallow-shore drinking, grazing, resting, reactivity, reproduction)
+    stepWildAnimalBehavior(world, h, dt, (w, islId, x, y, tx, ty, stepDist, stuck, dtSec, id) =>
+      steerEntity(w, islId, x, y, tx, ty, stepDist, false, stuck, dtSec, id),
+    );
   }
 }
 
@@ -4402,6 +4225,16 @@ function tickExploreRuins(world: WorldState, dt: number, particles: Particle[]) 
 
     explorer.thoughtBubble = 'Ancient relic!';
     explorer.thoughtTimer = 4.0;
+    advanceKnowledge(explorer, 'sailing', 4.5);
+    recordNpcMemory(explorer, {
+      day: world.environment.dayCount,
+      timeOfDay: world.environment.timeOfDay,
+      kind: 'discovery',
+      summary: `Explored ${ruin.name} on ${ISLAND_DEFS[ruin.islandId].name}.`,
+      actorIds: [],
+      importance: 8,
+      sentiment: 'positive',
+    });
     addChronicle(
       world,
       `${explorer.name.split(' ')[0]} explored ${ruin.name} on ${ISLAND_DEFS[ruin.islandId].name} (${ruin.lootLabel})!`,
@@ -4537,7 +4370,7 @@ function tickDiplomacyAndWar(world: WorldState, dt: number, particles: Particle[
       const dist = Math.hypot(targetV.x - r.x, targetV.y - r.y);
       const attackRange = targetV.weaponType === 'bow' ? 28 : 15;
       if (dist > 14) {
-        const step = steerEntity(world, r.islandId, r.x, r.y, targetV.x, targetV.y, 23 * dt, false, r.stuckState, dt);
+        const step = steerEntity(world, r.islandId, r.x, r.y, targetV.x, targetV.y, 23 * dt, false, r.stuckState, dt, r.id);
         r.x = step.x;
         r.y = step.y;
         r.islandId = step.islandId;
@@ -4580,7 +4413,7 @@ function tickDiplomacyAndWar(world: WorldState, dt: number, particles: Particle[
       }
     } else if (world.gameMode === 'shared_siege' && r.islandId !== 'cradle') {
       const cradle = ISLAND_DEFS.cradle;
-      const step = steerEntity(world, r.islandId, r.x, r.y, cradle.centerX, cradle.centerY, 24 * dt, false, r.stuckState, dt);
+      const step = steerEntity(world, r.islandId, r.x, r.y, cradle.centerX, cradle.centerY, 24 * dt, false, r.stuckState, dt, r.id);
       r.x = step.x;
       r.y = step.y;
       r.islandId = step.islandId;
@@ -4592,11 +4425,11 @@ function tickDiplomacyAndWar(world: WorldState, dt: number, particles: Particle[
         r.targetX = ev.centerX + (Math.random() * 240 - 120);
         r.targetY = ev.centerY + (Math.random() * 180 - 90);
       } else {
-        const step = steerEntity(world, 'embervault', r.x, r.y, r.targetX, r.targetY, 18 * dt, false, r.stuckState, dt);
+        const step = steerEntity(world, 'embervault', r.x, r.y, r.targetX, r.targetY, 18 * dt, false, r.stuckState, dt, r.id);
         r.x = step.x;
         r.y = step.y;
         r.facing = step.facing;
-        if (step.wasStuckReset) {
+        if (step.wasStuckReset || step.hitWaterEdge) {
           const ev = ISLAND_DEFS.embervault;
           r.targetX = ev.centerX + (Math.random() * 200 - 100);
           r.targetY = ev.centerY + (Math.random() * 160 - 80);
@@ -4769,12 +4602,8 @@ function tickVillageCulturesAndBonfireRituals(
             a.thoughtBubble = 'Evening fire!';
             a.thoughtTimer = 3.2;
           }
-          for (let j = i + 1; j < gathered.length; j++) {
-            const b = gathered[j];
-            a.relationships[b.id] = Math.min(100, (a.relationships[b.id] ?? 30) + 5);
-            b.relationships[a.id] = Math.min(100, (b.relationships[a.id] ?? 30) + 5);
-          }
         }
+        processBonfireSocialCircle(world, islandId, gathered);
         grantKnowledge(world, 1.8, particles);
       }
 
@@ -4862,11 +4691,11 @@ function tickClanVillagers(world: WorldState, dt: number) {
 
     const d = Math.hypot(cv.targetX - cv.x, cv.targetY - cv.y);
     if (d > 8) {
-      const step = steerEntity(world, cv.islandId, cv.x, cv.y, cv.targetX, cv.targetY, 26 * dt, false, cv.stuckState, dt);
+      const step = steerEntity(world, cv.islandId, cv.x, cv.y, cv.targetX, cv.targetY, 26 * dt, false, cv.stuckState, dt, cv.id);
       cv.x = step.x;
       cv.y = step.y;
       cv.facing = step.facing;
-      if ((step.hitEdge || step.wasStuckReset) && (!cv.edgeAckCooldown || cv.edgeAckCooldown <= 0)) {
+      if ((step.hitEdge || step.hitWaterEdge || step.wasStuckReset) && (!cv.edgeAckCooldown || cv.edgeAckCooldown <= 0)) {
         cv.edgeAckCooldown = 2.5;
         if (step.hitEdge) {
           cv.thoughtBubble = 'High cliff!';
@@ -4937,6 +4766,7 @@ function tickSkillTeaching(world: WorldState, dt: number, particles: Particle[])
       teacher.thoughtTimer = 2.6;
     }
     if (getSkillLevel(student, bestSkill) > prevLv) {
+      recordPositiveContribution(world, teacher, 'teach', student, 3);
       addChronicle(
         world,
         `${teacher.name.split(' ')[0]} mentored ${student.name.split(' ')[0]} in ${SKILL_META[bestSkill].label}!`,
@@ -4987,7 +4817,7 @@ function tickAutonomousAiVillages(world: WorldState, dt: number) {
       nextType = 'bonfire';
     } else if (res.food < Math.max(10, pop * 6) && countType('farm_plot') < 2) {
       nextType = 'farm_plot';
-    } else if (pop >= beds || countType('lean_to') + countType('cottage') === 0) {
+    } else if (villageNeedsHousing(pop, beds) || countType('lean_to') + countType('cottage') === 0) {
       nextType = countType('lean_to') === 0 && res.stone < 8 ? 'lean_to' : 'cottage';
     } else if (islandId === 'timbercrown') {
       if (!hasType('woodshop')) nextType = 'woodshop';
@@ -5013,6 +4843,8 @@ function tickAutonomousAiVillages(world: WorldState, dt: number) {
           const b = createBuildingInstance(world, nextType, islandId, site.x, site.y);
           b.cultureId = cultureId;
           b.unlocked = true;
+          b.constructionStage = 'complete';
+          b.pausedForMaterials = false;
           b.level = 1;
           world.buildings.push(b);
           if (nextType === 'dock') {
@@ -5149,8 +4981,7 @@ function tickForeignPerimeterAndParley(world: WorldState, _dt: number) {
 
         if (allowed) {
           v.visitStatus = 'admitted';
-          v.relationships[localResident.id] = Math.min(100, relScore + 8);
-          localResident.relationships[v.id] = Math.min(100, (localResident.relationships[v.id] ?? 36) + 8);
+          processDirectSocialShift(world, v, localResident, 8, 'parley');
           v.thoughtBubble = 'Admitted!';
           v.thoughtTimer = 3.0;
           localResident.thoughtBubble = 'Welcome in!';
@@ -5160,6 +4991,7 @@ function tickForeignPerimeterAndParley(world: WorldState, _dt: number) {
             world,
             `${v.name.split(' ')[0]} greeted ${localResident.name.split(' ')[0]} outside ${isl.name} and was admitted.`,
             'bond',
+            { islandId: isl.id, participantIds: [v.id, localResident.id] },
           );
         } else {
           v.visitStatus = 'denied';
@@ -5171,6 +5003,13 @@ function tickForeignPerimeterAndParley(world: WorldState, _dt: number) {
           v.targetX = homeDef.centerX;
           v.targetY = homeDef.centerY;
           v.autonomyReason = `${isl.name} border policy denied entry.`;
+          emitWorldEvent(world, {
+            category: 'migration',
+            significance: 'minor',
+            summary: `${localResident.name.split(' ')[0]} turned ${v.name.split(' ')[0]} away at ${isl.name} border.`,
+            islandId: isl.id,
+            participantIds: [v.id, localResident.id],
+          });
         }
       }
     } else {
@@ -5419,8 +5258,7 @@ function executeRtsOrder(
       const stats = getTraitStats(v);
       const techMods = getTechModifiers(world.unlockedTechIds);
       const rate = 0.34 * stats.workSpeed * stats.gatherYieldMult * techMods.gatherMult * dt;
-      const take = Math.min(node.amount, rate * 1.5);
-      node.amount -= take;
+      const take = harvestWildNode(node, rate * 1.5);
       const creditIsle = v.homeIslandId ?? v.islandId;
       if (node.kind === 'tree' || node.kind === 'branch_pile') {
         addVillageResource(world, creditIsle, 'timber', take);
@@ -5514,12 +5352,8 @@ export function stepSimulation(
     }
   }
 
-  // 2. Wild node slow natural regrowth (scarce resources)
-  for (const node of world.wildNodes) {
-    if (node.amount < node.maxAmount) {
-      node.amount = Math.min(node.maxAmount, node.amount + dt * 0.038);
-    }
-  }
+  // 2. Living flora regrowth only (mineral & stone nodes are strictly finite)
+  tickWildNodeRegrowth(world, dt);
 
   // 3. Autonomous Building, Tech, Cableways, Gliders, Ruins, Projectiles, Siege & Teaching
   tickAutonomousConstruction(world, dt, particles, emitVisualParticles);
@@ -5537,8 +5371,9 @@ export function stepSimulation(
   tickVillageCulturesAndBonfireRituals(world, dt, particles, emitVisualParticles);
   tickSkillTeaching(world, dt, particles);
   tickSharedSiege(world, dt, particles);
+  tickGovernance(world, dt);
 
-  // 4. Gate arrivals (strictly gated by per-island beds AND food surplus!)
+  // 4. Gate arrivals via physical migrant skiff (strictly gated by per-island beds AND food surplus!)
   const hasQueued = world.pendingArrivals.some((a) => a.kind === 'traveler');
   const arrivalIsle: IslandId = getOwnedBuildIslands(world)[0] ?? world.localHomeIslandId ?? 'cradle';
   const arrPop = world.villagers.filter((v) => (v.homeIslandId ?? v.islandId) === arrivalIsle).length;
@@ -5551,21 +5386,19 @@ export function stepSimulation(
       const names = new Set(world.villagers.map((v) => v.name));
       const traveler = generateCandidate('traveler', world.environment.dayCount, names);
       traveler.islandId = arrivalIsle;
-      const greeter =
-        world.villagers.find((v) => (v.homeIslandId ?? v.islandId) === arrivalIsle && (v.lifeStage === 'adult' || v.lifeStage === 'elder')) ??
-        null;
+      const greeter = getGreetingVillagerForIsland(world, arrivalIsle);
       if (greeter) {
         traveler.greeterId = greeter.id;
         traveler.greeterName = greeter.name;
       } else {
         evaluateTravelerDecision(world, traveler, null);
       }
-      world.pendingArrivals.push(traveler);
+      dispatchMigrantBoat(world, arrivalIsle, traveler);
     }
   }
 
   for (const arr of world.pendingArrivals) {
-    if (arr.kind === 'traveler' && arr.decisionVerdict === 'talking') {
+    if (arr.kind === 'traveler' && arr.boatPhase !== 'approaching' && arr.decisionVerdict === 'talking') {
       arr.deliberationTimer -= dt;
       if (arr.deliberationTimer <= 0) {
         const greeter = arr.greeterId ? world.villagers.find((v) => v.id === arr.greeterId) ?? null : null;
@@ -5576,7 +5409,7 @@ export function stepSimulation(
 
   if (world.pendingArrivals.length > 0) {
     const first = world.pendingArrivals[0];
-    if (first.kind === 'birth' || first.decisionVerdict !== 'talking') {
+    if (first.kind === 'birth' || (first.boatPhase !== 'approaching' && first.decisionVerdict !== 'talking')) {
       world.autoWelcomeTimer -= dt;
       if (world.autoWelcomeTimer <= 0) {
         const targetIsle = first.islandId ?? arrivalIsle;
@@ -5734,7 +5567,7 @@ export function stepSimulation(
       (v.lifeStage === 'elder' ? 0.8 : 1);
     const dist = Math.hypot(v.targetX - v.x, v.targetY - v.y);
     if (dist > 8) {
-      const step = steerEntity(world, v.islandId, v.x, v.y, v.targetX, v.targetY, speed * dt, false, v.stuckState, dt);
+      const step = steerEntity(world, v.islandId, v.x, v.y, v.targetX, v.targetY, speed * dt, false, v.stuckState, dt, v.id);
       v.x = step.x;
       v.y = step.y;
       v.islandId = step.islandId;
@@ -5743,6 +5576,12 @@ export function stepSimulation(
         const isl = ISLAND_DEFS[v.islandId];
         v.targetX = isl.centerX + (Math.random() * 2 - 1) * (isl.radiusX * 0.52);
         v.targetY = isl.centerY + (Math.random() * 2 - 1) * (isl.radiusY * 0.52);
+        if (step.navBlockedReason) {
+          v.autonomyReason = `Replanning: ${step.navBlockedReason}`;
+        }
+        if (v.rtsOrder && v.rtsOrder.kind === 'move' && v.rtsOrder.islandId !== v.islandId) {
+          v.rtsOrder = null;
+        }
         v.decisionCooldown = Math.min(v.decisionCooldown, 1.0);
       }
       if (step.hitEdge && (!v.edgeAckCooldown || v.edgeAckCooldown <= 0)) {
@@ -5761,7 +5600,45 @@ export function stepSimulation(
         discoverIsland(world, v.islandId, v.name.split(' ')[0]);
       }
     } else if (v.state === 'walking') {
-      v.state = 'working';
+      if (v.decisionTrace?.chosenAction === 'haul_to_stockpile') {
+        if ((v.carriedAmount ?? 0) > 0.01) {
+          const activeSite =
+            world.activeConstruction &&
+            world.buildings.find(
+              (b) =>
+                b.id === world.activeConstruction?.buildingId &&
+                !b.unlocked &&
+                b.islandId === v.islandId &&
+                Math.hypot(v.x - b.x, v.y - b.y) <= 48 &&
+                (b.requiredMaterials?.[v.carriedResource!] ?? 0) > (b.deliveredMaterials?.[v.carriedResource!] ?? 0),
+            );
+          if (activeSite && v.carriedResource) {
+            if (!activeSite.deliveredMaterials) activeSite.deliveredMaterials = {};
+            const need = (activeSite.requiredMaterials?.[v.carriedResource] ?? 0) - (activeSite.deliveredMaterials[v.carriedResource] ?? 0);
+            const give = Math.min(need, v.carriedAmount ?? 0);
+            if (give > 0) {
+              activeSite.deliveredMaterials[v.carriedResource] = Number(((activeSite.deliveredMaterials[v.carriedResource] ?? 0) + give).toFixed(2));
+              v.carriedAmount = Math.max(0, Number(((v.carriedAmount ?? 0) - give).toFixed(2)));
+              if (v.carriedAmount <= 0.01) {
+                v.carriedAmount = 0;
+                v.carriedResource = null;
+              }
+            }
+            if ((v.carriedAmount ?? 0) > 0.01) {
+              depositCarriedToVillage(world, v, addVillageResource, syncCombinedFood);
+            }
+            v.thoughtBubble = 'Delivered!';
+            v.thoughtTimer = 2.0;
+          } else if (depositCarriedToVillage(world, v, addVillageResource, syncCombinedFood)) {
+            v.thoughtBubble = 'Stored!';
+            v.thoughtTimer = 2.0;
+          }
+        }
+        v.state = 'resting';
+        v.decisionCooldown = Math.min(v.decisionCooldown, 0.25);
+      } else {
+        v.state = 'working';
+      }
     } else if (v.state === 'exploring') {
       v.state = 'inspecting';
       const concept = v.cognition.focusObject ?? 'horizon';
@@ -5775,10 +5652,11 @@ export function stepSimulation(
       v.cognition.stage = cognitiveStageFromAwareness(v.cognition.awareness);
     }
     const busyStates = v.state === 'fighting' || v.state === 'hunting' || v.state === 'sleeping' || v.state === 'building';
-    if (v.socialCooldown <= 0 && !busyStates && v.hunger >= 30) {
+    if (!v.banished && v.socialCooldown <= 0 && !busyStates && v.hunger >= 30) {
       const peer = [...world.villagers, ...world.clanVillagers].find(
         (other) =>
           other.id !== v.id &&
+          !other.banished &&
           other.islandId === v.islandId &&
           other.state !== 'fighting' &&
           other.state !== 'hunting' &&
@@ -5790,27 +5668,17 @@ export function stepSimulation(
           Math.hypot(other.x - v.x, other.y - v.y) < 36,
       );
       if (peer) {
-        v.socialCooldown = 42 + Math.random() * 22;
-        if (!v.pairChatCooldowns) v.pairChatCooldowns = {};
-        if (!peer.pairChatCooldowns) peer.pairChatCooldowns = {};
-        v.pairChatCooldowns[peer.id] = 75;
-        peer.pairChatCooldowns[v.id] = 75;
-        v.cognition.socialCount += 1;
-        peer.cognition.socialCount += 1;
-        v.relationships[peer.id] = Math.min(100, (v.relationships[peer.id] ?? 32) + 3);
-        peer.relationships[v.id] = Math.min(100, (peer.relationships[v.id] ?? 32) + 3);
-        const novel = v.cognition.observedConcepts.find((c) => !peer.cognition.observedConcepts.includes(c));
-        if (novel) {
-          learnConcept(world, peer, novel, particles, v.name.split(' ')[0]);
-        } else if (!v.thoughtBubble) {
-          v.thoughtBubble = v.cognition.socialCount < 2 ? 'Hello, friend!' : 'Good chat!';
-          v.thoughtTimer = 2.4;
-        }
+        processSocialEncounter(world, v, peer, (target, concept, peerFirst) => {
+          learnConcept(world, target, concept, particles, peerFirst);
+        });
+        spreadIncidentRumor(world, v, peer);
+        spreadIncidentRumor(world, peer, v);
       }
     }
 
     // Task Execution & Knowledge generation (routed into villager's home village stockpile!)
     if (
+      !v.banished &&
       !hasActiveRtsOrder &&
       (v.state === 'working' || (v.state === 'exploring' && canVillagerWork(world, v))) &&
       canVillagerWork(world, v)
@@ -5818,57 +5686,106 @@ export function stepSimulation(
       const yieldMult = stats.gatherYieldMult * techMods.gatherMult;
       const rate = 0.25 * stats.workSpeed * yieldMult * (0.75 + (v.mood / 100) * 0.35);
       if (v.activeTask === 'forage') {
-        const node = world.wildNodes.find(
-          (n) => n.islandId === v.islandId && n.amount > 0.1 && (n.kind === 'berry_bush' || n.kind === 'flint_pile'),
+        const nearbyNode = world.wildNodes.find(
+          (n) =>
+            n.islandId === v.islandId &&
+            n.amount > 0.02 &&
+            (n.kind === 'berry_bush' || n.kind === 'flint_pile' || n.kind === 'branch_pile') &&
+            Math.hypot(n.x - v.x, n.y - v.y) < 48,
         );
-        if (node && Math.hypot(node.x - v.x, node.y - v.y) < 42) {
-          const take = Math.min(node.amount, rate * (1.35 + getSkillLevel(v, 'foraging') * 0.08) * dt);
-          node.amount -= take;
-          if (node.kind === 'berry_bush') {
-            addVillageResource(world, homeId, 'berries', take);
-          } else {
-            addVillageResource(world, homeId, 'stone', take * 0.85);
+        if (nearbyNode) {
+          const take = harvestWildNode(nearbyNode, rate * (1.35 + getSkillLevel(v, 'foraging') * 0.08) * dt);
+          if (take > 0) {
+            const resKey =
+              nearbyNode.kind === 'berry_bush' ? 'berries' : nearbyNode.kind === 'flint_pile' ? 'stone' : 'timber';
+            addToVillagerInventory(world, v, resKey, take, addVillageResource);
+            gainSkillXp(world, v, 'foraging', dt * 1.15);
+            advanceKnowledge(v, 'foraging', dt * 0.75);
+            grantKnowledge(world, dt * 0.95, particles, v);
+            if ((v.carriedAmount ?? 0) >= getCarryCap(v) - 0.05 || nearbyNode.amount <= 0.02) {
+              v.decisionCooldown = Math.min(v.decisionCooldown, 0.2);
+            }
           }
-          syncCombinedFood(world);
-          gainSkillXp(world, v, 'foraging', dt * 1.15);
-          grantKnowledge(world, dt * 0.95, particles, v);
         } else {
-          addVillageResource(world, homeId, 'berries', rate * 0.35 * dt);
-          addVillageResource(world, homeId, 'stone', rate * 0.15 * dt);
-          syncCombinedFood(world);
-          gainSkillXp(world, v, 'foraging', dt * 0.7);
-          grantKnowledge(world, dt * 0.65, particles, v);
+          const nextNode = world.wildNodes.find(
+            (n) =>
+              n.islandId === v.islandId &&
+              n.amount > 0.05 &&
+              (n.kind === 'berry_bush' || n.kind === 'flint_pile' || n.kind === 'branch_pile'),
+          );
+          if (nextNode) {
+            v.targetX = nextNode.x;
+            v.targetY = nextNode.y;
+            v.state = 'walking';
+          } else {
+            v.decisionCooldown = 0;
+          }
         }
       } else if (v.activeTask === 'gather_stone') {
-        const node = world.wildNodes.find(
-          (n) => n.islandId === v.islandId && n.amount > 0.1 && (n.kind === 'stone_boulder' || n.kind === 'flint_pile'),
+        const nearbyNode = world.wildNodes.find(
+          (n) =>
+            n.islandId === v.islandId &&
+            n.amount > 0.02 &&
+            (n.kind === 'stone_boulder' || n.kind === 'flint_pile') &&
+            Math.hypot(n.x - v.x, n.y - v.y) < 48,
         );
         const stoneBonus = 1 + getSkillLevel(v, 'stonecraft') * 0.1;
-        if (node && Math.hypot(node.x - v.x, node.y - v.y) < 46) {
-          const take = Math.min(node.amount, rate * 1.45 * stoneBonus * dt);
-          node.amount -= take;
-          addVillageResource(world, homeId, 'stone', take);
-          gainSkillXp(world, v, 'stonecraft', dt * 1.35);
-          grantKnowledge(world, dt * 0.85, particles, v);
+        if (nearbyNode) {
+          const take = harvestWildNode(nearbyNode, rate * 1.45 * stoneBonus * dt);
+          if (take > 0) {
+            addToVillagerInventory(world, v, 'stone', take, addVillageResource);
+            gainSkillXp(world, v, 'stonecraft', dt * 1.35);
+            advanceKnowledge(v, 'stonecraft', dt * 0.8);
+            if (nearbyNode.kind === 'flint_pile') advanceKnowledge(v, 'toolmaking', dt * 0.4);
+            grantKnowledge(world, dt * 0.85, particles, v);
+            if ((v.carriedAmount ?? 0) >= getCarryCap(v) - 0.05 || nearbyNode.amount <= 0.02) {
+              v.decisionCooldown = Math.min(v.decisionCooldown, 0.2);
+            }
+          }
         } else {
-          addVillageResource(world, homeId, 'stone', rate * 0.55 * stoneBonus * dt);
-          gainSkillXp(world, v, 'stonecraft', dt * 0.8);
-          grantKnowledge(world, dt * 0.55, particles, v);
+          const nextNode = world.wildNodes.find(
+            (n) => n.islandId === v.islandId && n.amount > 0.05 && (n.kind === 'stone_boulder' || n.kind === 'flint_pile'),
+          );
+          if (nextNode) {
+            v.targetX = nextNode.x;
+            v.targetY = nextNode.y;
+            v.state = 'walking';
+          } else {
+            v.decisionCooldown = 0;
+          }
         }
       } else if (v.activeTask === 'chop') {
         const woodBoost = (hasBuildingType(world, 'woodshop', homeId) ? 1.35 : 1) * (1 + getSkillLevel(v, 'woodcraft') * 0.09);
         const treeNode = world.wildNodes.find(
-          (n) => n.islandId === v.islandId && n.amount > 0.1 && (n.kind === 'tree' || n.kind === 'branch_pile'),
+          (n) =>
+            n.islandId === v.islandId &&
+            n.amount > 0.02 &&
+            (n.kind === 'tree' || n.kind === 'branch_pile') &&
+            Math.hypot(n.x - v.x, n.y - v.y) < 48,
         );
-        if (treeNode && Math.hypot(treeNode.x - v.x, treeNode.y - v.y) < 48) {
-          const take = Math.min(treeNode.amount, rate * 1.3 * woodBoost * dt);
-          treeNode.amount -= take;
-          addVillageResource(world, homeId, 'timber', take);
+        if (treeNode) {
+          const take = harvestWildNode(treeNode, rate * 1.3 * woodBoost * dt);
+          if (take > 0) {
+            addToVillagerInventory(world, v, 'timber', take, addVillageResource);
+            gainSkillXp(world, v, 'woodcraft', dt * 1.2);
+            advanceKnowledge(v, 'woodcraft', dt * 0.75);
+            grantKnowledge(world, dt * 0.65, particles, v);
+            if ((v.carriedAmount ?? 0) >= getCarryCap(v) - 0.05 || treeNode.amount <= 0.02) {
+              v.decisionCooldown = Math.min(v.decisionCooldown, 0.2);
+            }
+          }
         } else {
-          addVillageResource(world, homeId, 'timber', rate * 0.85 * woodBoost * dt);
+          const nextTree = world.wildNodes.find(
+            (n) => n.islandId === v.islandId && n.amount > 0.05 && (n.kind === 'tree' || n.kind === 'branch_pile'),
+          );
+          if (nextTree) {
+            v.targetX = nextTree.x;
+            v.targetY = nextTree.y;
+            v.state = 'walking';
+          } else {
+            v.decisionCooldown = 0;
+          }
         }
-        gainSkillXp(world, v, 'woodcraft', dt * 1.2);
-        grantKnowledge(world, dt * 0.65, particles, v);
       } else if (v.activeTask === 'quarry') {
         const crag = v.islandId === 'coppercrag' || v.islandId === 'frostpeak';
         const quarryBonus = 1 + getSkillLevel(v, 'stonecraft') * 0.1;
@@ -5880,12 +5797,15 @@ export function stepSimulation(
           addVillageResource(world, homeId, 'iron', rate * (crag ? 0.35 : 0.08) * dt);
         }
         gainSkillXp(world, v, 'stonecraft', dt * 1.1);
+        advanceKnowledge(v, 'stonecraft', dt * 0.75);
         grantKnowledge(world, dt * 0.7, particles, v);
       } else if (v.activeTask === 'farm') {
         gainSkillXp(world, v, 'farming', dt * 1.1);
+        advanceKnowledge(v, 'foraging', dt * 0.7);
         grantKnowledge(world, dt * 0.55, particles, v);
       } else if (v.activeTask === 'pasture') {
         gainSkillXp(world, v, 'husbandry', dt * 1.1);
+        advanceKnowledge(v, 'foraging', dt * 0.55);
         grantKnowledge(world, dt * 0.5, particles, v);
       } else if (v.activeTask === 'bake' && homeRes.grain >= 0.2) {
         const bakeAmt = Math.min(homeRes.grain, 0.22 * dt);
@@ -5894,10 +5814,14 @@ export function stepSimulation(
         addVillageResource(world, homeId, 'hearthlight', 0.25 * dt);
         syncCombinedFood(world);
         gainSkillXp(world, v, 'herbalism', dt * 0.7);
+        advanceKnowledge(v, 'cooking', dt * 0.9);
+        advanceKnowledge(v, 'firecraft', dt * 0.35);
         grantKnowledge(world, dt * 0.5, particles, v);
       } else if (v.activeTask === 'study') {
         v.cognition.awareness = Math.min(100, v.cognition.awareness + dt * 1.8);
         v.cognition.stage = cognitiveStageFromAwareness(v.cognition.awareness);
+        advanceKnowledge(v, 'social_customs', dt * 0.8);
+        advanceKnowledge(v, 'healing', dt * 0.35);
         grantKnowledge(world, dt * 1.85, particles, v);
         addVillageResource(world, homeId, 'hearthlight', 0.22 * dt);
       } else if (v.activeTask === 'smelt') {
@@ -5907,11 +5831,14 @@ export function stepSimulation(
           addVillageResource(world, homeId, 'bronze', take * (0.85 + getSkillLevel(v, 'metallurgy') * 0.05));
         }
         gainSkillXp(world, v, 'metallurgy', dt * 1.25);
+        advanceKnowledge(v, 'toolmaking', dt * 0.85);
+        advanceKnowledge(v, 'firecraft', dt * 0.45);
         grantKnowledge(world, dt * 0.85, particles, v);
       } else if (v.activeTask === 'fish') {
         addVillageResource(world, homeId, 'fish', rate * (0.9 + getSkillLevel(v, 'seamanship') * 0.08) * dt);
         syncCombinedFood(world);
         gainSkillXp(world, v, 'seamanship', dt * 1.1);
+        advanceKnowledge(v, 'sailing', dt * 0.8);
         grantKnowledge(world, dt * 0.55, particles, v);
       } else if (v.activeTask === 'explore') {
         const undisc = ISLAND_ORDER.filter((id) => !world.islands[id].discovered);
@@ -5936,14 +5863,22 @@ export function stepSimulation(
           v.thoughtTimer = 3.5;
         }
         gainSkillXp(world, v, 'seamanship', dt * 0.65);
+        advanceKnowledge(v, 'sailing', dt * 0.65);
         grantKnowledge(world, dt * 0.7, particles, v);
       }
+      if (nearFire) advanceKnowledge(v, 'firecraft', dt * 0.15);
     }
 
     if (!hasActiveRtsOrder) {
       v.decisionCooldown -= dt;
       if (v.decisionCooldown <= 0) {
-        v.decisionCooldown = v.cognition.stage === 'awakening' ? 3.5 + Math.random() * 2.5 : 5 + Math.random() * 5;
+        const isResting = v.state === 'resting';
+        v.decisionCooldown =
+          v.cognition.stage === 'awakening'
+            ? 3.0 + Math.random() * 2.0
+            : isResting
+              ? 2.2 + Math.random() * 1.8
+              : 4.5 + Math.random() * 4.0;
         decideVillagerBehavior(world, v);
       }
     }
@@ -5964,7 +5899,7 @@ export function stepSimulation(
       world.catX = step.x;
       world.catY = step.y;
       world.catFacing = step.facing;
-      if (step.hitEdge) {
+      if (step.hitEdge || step.hitWaterEdge) {
         world.catPauseTimer = 1.4;
         const c = ISLAND_DEFS.cradle;
         world.catTargetX = c.centerX + (Math.random() * 240 - 120);
@@ -6085,9 +6020,15 @@ function handleNewDayEvents(world: WorldState) {
       if (candidate) {
         v.partnerId = candidate.id;
         candidate.partnerId = v.id;
+        processDirectSocialShift(world, v, candidate, 14, 'hangout');
         upsertLineage(world, v);
         upsertLineage(world, candidate);
-        addChronicle(world, `${v.name.split(' ')[0]} and ${candidate.name.split(' ')[0]} formed a life bond!`, 'bond');
+        addChronicle(
+          world,
+          `${v.name.split(' ')[0]} and ${candidate.name.split(' ')[0]} formed a life bond!`,
+          'bond',
+          { islandId: v.homeIslandId ?? v.islandId, participantIds: [v.id, candidate.id] },
+        );
       }
     }
   }
@@ -6199,9 +6140,24 @@ function resolveArrival(world: WorldState, arrivalId: string, accept: boolean, p
 
   const homeId: IslandId = cand.islandId ?? world.localHomeIslandId ?? 'cradle';
   const homeDef = ISLAND_DEFS[homeId];
+  const migrantBoat = cand.boatId ? world.boats.find((b) => b.id === cand.boatId) : undefined;
 
   if (!accept) {
-    addChronicle(world, `${cand.name} parted peacefully from ${homeDef.name}.`, 'arrival');
+    cand.boatPhase = 'departing';
+    if (migrantBoat) {
+      sendMigrantBoatAway(migrantBoat, cand.name.split(' ')[0]);
+    }
+    emitWorldEvent(world, {
+      category: 'migration',
+      significance: 'notable',
+      summary: `${cand.name} re-boarded their skiff and sailed away from ${homeDef.name}.`,
+      islandId: homeId,
+      participantIds: cand.greeterId ? [cand.greeterId] : [],
+    });
+    addChronicle(world, `${cand.name} parted peacefully by skiff from ${homeDef.name}.`, 'arrival', {
+      islandId: homeId,
+      participantIds: cand.greeterId ? [cand.greeterId] : [],
+    });
     return;
   }
 
@@ -6210,8 +6166,11 @@ function resolveArrival(world: WorldState, arrivalId: string, accept: boolean, p
   const unitSkills = isBirth ? {} : rollStarterSkills(cand.lifeStage, false);
   const hpMod = cand.traits.reduce((sum, tid) => sum + (TRAITS[tid]?.hpMaxMod ?? 0), 0);
   const maxHp = Math.max(70, 100 + (unitStats.endurance - 8) * 4 + hpMod);
-  const sx = homeDef.centerX + (Math.random() * 48 - 24);
-  const sy = homeDef.centerY + (Math.random() * 36 - 18);
+  const landing = isBirth
+    ? { x: homeDef.centerX + (Math.random() * 48 - 24), y: homeDef.centerY + (Math.random() * 36 - 18) }
+    : getMigrantLandingPoint(homeId);
+  const sx = landing.x;
+  const sy = landing.y;
   const villager: VillagerEntity = {
     id: `vil_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     name: cand.name,
@@ -6267,7 +6226,7 @@ function resolveArrival(world: WorldState, arrivalId: string, accept: boolean, p
     activeWish: pickRandomWish(),
     wishFulfilledToday: false,
     currentDialogue: isBirth ? 'Soft curious blinking beside the warm embers.' : `Let me explore ${homeDef.name} and meet your people first!`,
-    lastMemory: isBirth ? 'Born beside the warm hearth.' : `Stepped ashore on ${homeDef.name}.`,
+    lastMemory: isBirth ? 'Born beside the warm hearth.' : `Disembarked onto ${homeDef.name} pier.`,
     relationships: {},
     hangOutTargetId: null,
     socialCooldown: 12,
@@ -6275,8 +6234,8 @@ function resolveArrival(world: WorldState, arrivalId: string, accept: boolean, p
     suggestedTask: null,
     activeTask: 'explore',
     state: isBirth ? 'sleeping' : 'exploring',
-    autonomyReason: isBirth ? 'Taking in warmth and light like a newborn.' : `Exploring ${homeDef.name} and greeting locals before work.`,
-    thoughtBubble: isBirth ? 'Ooh...' : 'New land!',
+    autonomyReason: isBirth ? 'Taking in warmth and light like a newborn.' : `Walking up from ${homeDef.name} pier to meet villagers.`,
+    thoughtBubble: isBirth ? 'Ooh...' : 'Landfall!',
     thoughtTimer: 3.5,
     x: sx,
     y: sy,
@@ -6290,8 +6249,45 @@ function resolveArrival(world: WorldState, arrivalId: string, accept: boolean, p
     attackCooldown: 0,
     edgeAckCooldown: 0,
     stuckState: { lastX: sx, lastY: sy, timer: 0, detourSign: 1 },
+    personality: buildNpcPersonality(
+      `vil_arr_${cand.id}`,
+      cand.traits,
+      cand.traits.includes('curious_scout') ? 0.85 : 0.5,
+      cand.traits.includes('brave_hunter') ? 0.8 : 0.5,
+      false,
+    ),
+    knowledge: createKnowledgeProfile(isBirth ? 'infant' : 'awakening'),
+    memories: [
+      {
+        id: `mem_arr_${cand.id}`,
+        day: world.environment.dayCount,
+        timeOfDay: world.environment.timeOfDay,
+        kind: isBirth ? 'social' : 'discovery',
+        summary: isBirth ? `Born beside the warm hearth on ${homeDef.name}.` : `Disembarked from skiff at ${homeDef.name} shore.`,
+        actorIds: cand.parentIds ? [...cand.parentIds] : [],
+        importance: 8,
+        sentiment: 'positive',
+      },
+    ],
+    carriedResource: null,
+    carriedAmount: 0,
+    carryCapacity: 6,
+    reputation: 10,
+    banished: false,
   };
   world.villagers.push(villager);
+
+  if (migrantBoat) {
+    sendMigrantBoatAway(migrantBoat);
+  }
+  if (!isBirth && cand.greeterId) {
+    const greeter = world.villagers.find((v) => v.id === cand.greeterId);
+    if (greeter) {
+      processSocialEncounter(world, villager, greeter, (target, concept, peerFirst) => {
+        learnConcept(world, target, concept, particles, peerFirst);
+      });
+    }
+  }
   if (isBirth && cand.parentIds) {
     for (const pid of cand.parentIds) {
       const par = world.villagers.find((u) => u.id === pid);
@@ -6308,8 +6304,12 @@ function resolveArrival(world: WorldState, arrivalId: string, accept: boolean, p
   upsertLineage(world, villager);
   addChronicle(
     world,
-    cand.kind === 'birth' ? `Baby ${cand.name} was born on ${homeDef.name}!` : `${cand.name} joined ${homeDef.name}!`,
+    cand.kind === 'birth' ? `Baby ${cand.name} was born on ${homeDef.name}!` : `${cand.name} disembarked at ${homeDef.name} pier and joined the village!`,
     cand.kind === 'birth' ? 'birth' : 'arrival',
+    {
+      islandId: homeId,
+      participantIds: [villager.id, ...(cand.greeterId ? [cand.greeterId] : [])],
+    },
   );
   spawnParticle(particles, {
     kind: 'heart',
@@ -6506,7 +6506,8 @@ export function sendVillagerToHangOut(world: WorldState, villagerId: string, tar
   v.targetX = t.x;
   v.targetY = t.y;
   v.state = 'socializing';
-  v.relationships[t.id] = Math.min(100, (v.relationships[t.id] ?? 30) + 4);
+  v.hangOutTargetId = t.id;
+  processDirectSocialShift(world, v, t, 2, 'hangout');
   return `Suggested ${v.name.split(' ')[0]} visit ${t.name.split(' ')[0]}.`;
 }
 
@@ -6545,6 +6546,8 @@ export function suggestBuildingSpot(
   if (world.gameMode === 'sovereign_sandbox') {
     const b = createBuildingInstance(world, buildingType, islandId, Math.round(x), Math.round(y), cropType ?? 'turnip', livestockKind ?? 'sheep');
     b.unlocked = true;
+    b.constructionStage = 'complete';
+    b.pausedForMaterials = false;
     b.level = 1;
     world.buildings.push(b);
     world.islands[islandId].discovered = true;
@@ -6570,6 +6573,7 @@ export function suggestBuildingSpot(
     }
     spendVillageResources(world, 'cradle', cost);
     const b = createBuildingInstance(world, buildingType, islandId, Math.round(x), Math.round(y), cropType ?? 'turnip', livestockKind ?? 'sheep');
+    b.deliveredMaterials = { ...cost };
     world.buildings.push(b);
     addChronicle(world, `Defenders staked ${b.name} on ${isl.name}.`, 'build');
     return { ok: true, message: `Staked ${b.name} on ${isl.name} — builders moving to construct!` };
@@ -6707,9 +6711,18 @@ export function applyWorldCommand(
         v.islandId = cmd.islandId;
         v.x = cmd.x;
         v.y = cmd.y;
+      } else {
+        const reach = checkTargetReachability(world, v.islandId, v.x, v.y, cmd.x, cmd.y, ARCHIPELAGO_LANDMARKS);
+        if (!reach.reachable) {
+          return { ok: false, message: reach.reason ?? 'Destination unreachable across deep water or cliffs.' };
+        }
       }
       v.targetX = cmd.x;
       v.targetY = cmd.y;
+      if (v.stuckState) {
+        v.stuckState.waypoints = undefined;
+        v.stuckState.navBlockedReason = null;
+      }
       v.state = 'walking';
       v.thoughtBubble = 'On my way!';
       v.thoughtTimer = 2.4;
@@ -6967,10 +6980,20 @@ export function applyWorldCommand(
           v.islandId = cmd.order.islandId;
           v.x = ox;
           v.y = oy;
+        } else if (cmd.order.kind === 'move') {
+          const reach = checkTargetReachability(world, v.islandId, v.x, v.y, ox, oy, ARCHIPELAGO_LANDMARKS);
+          if (!reach.reachable) {
+            v.thoughtBubble = 'No route!';
+            v.thoughtTimer = 2.2;
+            continue;
+          }
         }
         v.rtsOrder = { ...cmd.order, x: ox, y: oy };
         v.targetX = ox;
         v.targetY = oy;
+        if (v.stuckState) {
+          v.stuckState.waypoints = undefined;
+        }
         v.state = cmd.order.kind === 'attack' ? 'fighting' : cmd.order.kind === 'hold' ? 'working' : 'walking';
         v.thoughtBubble =
           cmd.order.kind === 'attack'
@@ -7158,6 +7181,8 @@ export function applyWorldCommand(
           for (const b of world.buildings) {
             if (!b.unlocked && b.cultureId !== 'ashen_raider') {
               b.unlocked = true;
+              b.constructionStage = 'complete';
+              b.pausedForMaterials = false;
               b.level = Math.max(1, b.level);
             }
           }
@@ -7302,6 +7327,9 @@ export function createHudSnapshot(world: WorldState, viewerIslandId?: IslandId):
     diplomacy: { ...world.diplomacy },
     pendingArrivals: world.pendingArrivals.map((a) => ({ ...a })),
     chronicle: world.chronicle.slice(0, 24),
+    eventLog: (world.eventLog ?? []).slice(0, 120),
+    communityRules: (world.communityRules ?? []).map((r) => ({ ...r })),
+    disputes: (world.disputes ?? []).map((d) => ({ ...d, votes: [...d.votes] })),
     aspirations: buildAspirations(world),
     chiefId: world.chiefId,
     chiefFocus: world.chiefFocus,

@@ -51,7 +51,13 @@ export function ArrivalPrompt({
           <div className="flex items-center justify-between gap-1 text-[10px] font-semibold text-[#E5AF47]">
             <span className="inline-flex items-center gap-1">
               <Sparkles className="w-3 h-3 shrink-0" />
-              <span>{isBirth ? 'Baby Born' : 'Castaway at Shore'}</span>
+              <span>
+                {isBirth
+                  ? 'Baby Born'
+                  : candidate.boatPhase === 'approaching'
+                    ? 'Skiff Approaching'
+                    : 'Migrant at Pier'}
+              </span>
             </span>
             {!isBirth && (
               <span style={{ color: attitudeMeta.toneColor }}>{attitudeMeta.label}</span>
@@ -85,7 +91,12 @@ export function ArrivalPrompt({
       {!isBirth && (
         <div className="mt-2 px-2 py-1.5 rounded-sm bg-[#10131C]/80 border border-[#8E6B35]/30 text-[10.5px] leading-snug flex items-start gap-1.5">
           <MessageCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[#E5AF47]" />
-          {candidate.decisionVerdict === 'talking' ? (
+          {!isBirth && candidate.boatPhase === 'approaching' ? (
+            <span className="text-[#C8BCA6]">
+              Skiff sailing toward the island harbor;{' '}
+              <span className="text-[#F3EAD6] font-medium">{greeterFirst}</span> is waiting by the pier…
+            </span>
+          ) : candidate.decisionVerdict === 'talking' ? (
             <span className="text-[#C8BCA6]">
               <span className="text-[#F3EAD6] font-medium">{greeterFirst}</span> is speaking with them along the shore…
             </span>

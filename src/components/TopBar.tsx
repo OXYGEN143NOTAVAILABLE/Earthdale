@@ -304,25 +304,34 @@ export function TopBar({
           >
             {muted ? <VolumeX className="w-3.5 h-3.5 text-[#9C907D]" /> : <Volume2 className="w-3.5 h-3.5 text-[#E5AF47]" />}
           </button>
-          <div className="flex items-center gap-0.5 px-1 border-l border-[#8E6B35]/35" role="group" aria-label="Game Speed">
-            {([0, 1, 2, 3] as const).map((sp) => (
-              <button
-                key={sp}
-                type="button"
-                onClick={() => onChangeSimSpeed(sp)}
-                className={`px-1.5 py-1 rounded-sm text-[10.5px] font-semibold cursor-pointer tabular-nums transition-colors ${
-                  simSpeed === sp
-                    ? sp === 0
-                      ? 'bg-[#8E4B52] text-[#FFFDF9]'
-                      : 'bg-[#4C8767] text-[#FFFDF9]'
-                    : 'hover:bg-[#252D3D] text-[#C8BCA6]'
-                }`}
-                title={sp === 0 ? 'Pause Time (Space)' : `Simulation Speed ${sp}x`}
-              >
-                {sp === 0 ? <Pause className="w-3 h-3" /> : `${sp}×`}
-              </button>
-            ))}
-          </div>
+          {mpRoomCode ? (
+            <span
+              className="px-2 py-1 border-l border-[#8E6B35]/35 text-[10.5px] font-semibold text-[#8CE0AC] whitespace-nowrap"
+              title="Synchronized 1× Co-Op Clock (speed controls disabled in multiplayer)"
+            >
+              1× Synced
+            </span>
+          ) : (
+            <div className="flex items-center gap-0.5 px-1 border-l border-[#8E6B35]/35" role="group" aria-label="Game Speed">
+              {([0, 1, 2, 3] as const).map((sp) => (
+                <button
+                  key={sp}
+                  type="button"
+                  onClick={() => onChangeSimSpeed(sp)}
+                  className={`px-1.5 py-1 rounded-sm text-[10.5px] font-semibold cursor-pointer tabular-nums transition-colors ${
+                    simSpeed === sp
+                      ? sp === 0
+                        ? 'bg-[#8E4B52] text-[#FFFDF9]'
+                        : 'bg-[#4C8767] text-[#FFFDF9]'
+                      : 'hover:bg-[#252D3D] text-[#C8BCA6]'
+                  }`}
+                  title={sp === 0 ? 'Pause Time (Space)' : `Simulation Speed ${sp}x`}
+                >
+                  {sp === 0 ? <Pause className="w-3 h-3" /> : `${sp}×`}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             onClick={onPause}

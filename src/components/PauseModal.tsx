@@ -79,22 +79,28 @@ export function PauseModal({
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <div className="text-xs font-semibold text-[#B4A995] mb-1.5">Simulation Pace</div>
-            <div className="flex items-center gap-1 p-1 rounded bg-[#1B212E] border border-[#8E6B35]/30">
-              {([0, 1, 2, 3] as const).map((sp) => (
-                <button
-                  key={sp}
-                  type="button"
-                  onClick={() => onChangeSimSpeed(sp)}
-                  className={`flex-1 py-1.5 rounded-sm text-xs font-semibold cursor-pointer transition-colors ${
-                    settings.simSpeed === sp
-                      ? 'bg-[#D69635] text-[#14161D]'
-                      : 'text-[#B4A995] hover:text-[#F3EAD6]'
-                  }`}
-                >
-                  {sp === 0 ? 'Paused' : `${sp}x`}
-                </button>
-              ))}
-            </div>
+            {mpRoomCode ? (
+              <div className="px-2.5 py-1.5 rounded bg-[#1B212E] border border-[#8E6B35]/30 text-[11px] text-[#8CE0AC] font-medium">
+                1× Synchronized Clock — Time acceleration is disabled in Co-Op rooms.
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 p-1 rounded bg-[#1B212E] border border-[#8E6B35]/30">
+                {([0, 1, 2, 3] as const).map((sp) => (
+                  <button
+                    key={sp}
+                    type="button"
+                    onClick={() => onChangeSimSpeed(sp)}
+                    className={`flex-1 py-1.5 rounded-sm text-xs font-semibold cursor-pointer transition-colors ${
+                      settings.simSpeed === sp
+                        ? 'bg-[#D69635] text-[#14161D]'
+                        : 'text-[#B4A995] hover:text-[#F3EAD6]'
+                    }`}
+                  >
+                    {sp === 0 ? 'Paused' : `${sp}x`}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -137,7 +143,7 @@ export function PauseModal({
 
         {/* Keyboard Shortcuts Reference */}
         <div className="mt-4 pt-3 border-t border-[#8E6B35]/35 text-[11px] text-[#B4A995]">
-          <span className="font-semibold text-[#F3EAD6]">Controls & Shortcuts:</span> Drag Pan · Scroll Zoom · Space Pause/Play · 0 Recenter · Tab Cycle Villager · 1–9 Assign/Suggest Role · A Free Will · T Talk · P Praise · E Nudge Curiosity · F Meal · B Ledger · G Map · C Sky · H Dock · M Mute · Esc Journal
+          <span className="font-semibold text-[#F3EAD6]">Controls & Shortcuts:</span> Drag Pan · Scroll Zoom{mpRoomCode ? '' : ' · Space Pause/Play'} · 0 Recenter · Tab Cycle Villager · 1–9 Assign/Suggest Role · A Free Will · T Talk · P Praise · E Nudge Curiosity · F Meal · B Ledger · G Map · C Sky · H Dock · M Mute · Esc Journal
         </div>
 
         {/* Save Management & Room Controls */}

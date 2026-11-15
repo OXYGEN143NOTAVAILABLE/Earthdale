@@ -157,6 +157,11 @@ export function createLowPolyTree(
   const trunkMat = getFlatMaterial(0x684531, { roughness: 0.92 });
   const barkDarkMat = getFlatMaterial(0x4d3323, { roughness: 0.94 });
 
+  const canopyPivot = new THREE.Group();
+  canopyPivot.position.y = 1.25;
+  group.add(canopyPivot);
+  group.userData.canopyPivot = canopyPivot;
+
   if (kind === 'pine' || kind === 'cedar') {
     const isCedar = kind === 'cedar';
     const roots = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.56, 0.68, 6), barkDarkMat);
@@ -179,15 +184,15 @@ export function createLowPolyTree(
     ];
     tiers.forEach((t, idx) => {
       const cone = new THREE.Mesh(new THREE.ConeGeometry(t.r, t.h, 7), t.mat);
-      cone.position.y = t.y;
+      cone.position.y = t.y - 1.25;
       cone.rotation.y = idx * 0.45;
-      group.add(cone);
+      canopyPivot.add(cone);
 
       if (snow) {
         const cap = new THREE.Mesh(new THREE.ConeGeometry(t.r * 0.78, t.h * 0.52, 7), snowMat);
-        cap.position.y = t.y + t.h * 0.28;
+        cap.position.y = t.y + t.h * 0.28 - 1.25;
         cap.rotation.y = idx * 0.45;
-        group.add(cap);
+        canopyPivot.add(cap);
       }
     });
   } else {
@@ -242,8 +247,8 @@ export function createLowPolyTree(
     ];
     for (const [px, py, pz, pr, mat] of puffs) {
       const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(pr, 1), mat);
-      mesh.position.set(px, py, pz);
-      group.add(mesh);
+      mesh.position.set(px, py - 1.25, pz);
+      canopyPivot.add(mesh);
     }
 
     if (kind === 'orchard' && season === 'autumn') {
@@ -254,8 +259,8 @@ export function createLowPolyTree(
         [0.1, 2.52, 0.72],
       ]) {
         const apple = new THREE.Mesh(new THREE.DodecahedronGeometry(0.13, 0), appleMat);
-        apple.position.set(ax, ay, az);
-        group.add(apple);
+        apple.position.set(ax, ay - 1.25, az);
+        canopyPivot.add(apple);
       }
     }
   }
@@ -278,6 +283,7 @@ export function createWildNodeGroup(
   }
 
   if (node.kind === 'berry_bush') {
+    g.userData.isBush = true;
     const bushMat = getFlatMaterial(snow ? 0x678379 : 0x3b7440, { roughness: 0.86 });
     for (const [bx, by, bz, r] of [
       [0, 0.34, 0, 0.42],
@@ -590,17 +596,20 @@ function addCropVisuals(b: BuildingEntity, group: THREE.Group, lv: number) {
         }
         const tops = new THREE.Mesh(new THREE.ConeGeometry(0.15, h + 0.14, 5), leafMat);
         tops.position.set(rx, 0.25 + h * 0.5, rz);
+        tops.userData.isCropFoliage = true;
         group.add(tops);
       } else if (crop.cropType === 'wheat') {
         const h = 0.14 + stage * 0.16;
         const mat = stage >= 2 ? getFlatMaterial(stage === 3 ? 0xe5ad3a : 0xa5b449, { roughness: 0.76 }) : stalkMat;
         const sheaf = new THREE.Mesh(new THREE.ConeGeometry(0.14, h, 5), mat);
         sheaf.position.set(rx, 0.2 + h * 0.5, rz);
+        sheaf.userData.isCropFoliage = true;
         group.add(sheaf);
       } else if (crop.cropType === 'flax') {
         const h = 0.15 + stage * 0.14;
         const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, h, 4), stalkMat);
         stem.position.set(rx, 0.2 + h * 0.5, rz);
+        stem.userData.isCropFoliage = true;
         group.add(stem);
         if (stage >= 2) {
           const bloom = new THREE.Mesh(
@@ -608,12 +617,14 @@ function addCropVisuals(b: BuildingEntity, group: THREE.Group, lv: number) {
             getFlatMaterial(0x5a96dc, { roughness: 0.55 }),
           );
           bloom.position.set(rx, 0.24 + h, rz);
+          bloom.userData.isCropFoliage = true;
           group.add(bloom);
         }
       } else if (crop.cropType === 'herbs') {
         const h = 0.12 + stage * 0.1;
         const bush = new THREE.Mesh(new THREE.DodecahedronGeometry(0.14 + stage * 0.03, 0), getFlatMaterial(0x4b9365));
         bush.position.set(rx, 0.22 + h * 0.3, rz);
+        bush.userData.isCropFoliage = true;
         group.add(bush);
         if (stage >= 2) {
           const blossom = new THREE.Mesh(
@@ -621,6 +632,7 @@ function addCropVisuals(b: BuildingEntity, group: THREE.Group, lv: number) {
             getFlatMaterial(0xfef08a, { roughness: 0.5 }),
           );
           blossom.position.set(rx, 0.32 + h * 0.5, rz);
+          blossom.userData.isCropFoliage = true;
           group.add(blossom);
         }
       } else if (crop.cropType === 'orchard') {
@@ -691,12 +703,86 @@ export function createLowPolyBuilding(
   const lv = b.level;
 
   if (!b.unlocked) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.9, 5), woodMat);
-    post.position.y = 0.45;
-    group.add(post);
-    const board = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.48, 0.12), getFlatMaterial(0xe8dbc3, { roughness: 0.78 }));
-    board.position.y = 0.76;
-    group.add(board);
+    const stage =
+      b.constructionStage ??
+      (constructionRatio < 0.25 ? 'foundation' : constructionRatio < 0.5 ? 'framework' : constructionRatio < 0.75 ? 'walls' : 'roof');
+
+    // Stage 1 (Foundation): Stone/timber footing perimeter & corner stakes
+    const footing = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.16, 2.2), stoneMat);
+    footing.position.y = 0.08;
+    group.add(footing);
+
+    for (const [sx, sz] of [[-1.3, -0.95], [1.3, -0.95], [-1.3, 0.95], [1.3, 0.95]]) {
+      const stakeH = stage === 'foundation' ? 0.58 : 1.72;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.08, stakeH, 5), woodMat);
+      post.position.set(sx, stakeH * 0.5 + 0.08, sz);
+      group.add(post);
+    }
+
+    // Stage 2 (Framework): Top tie-beams & diagonal timber brace
+    if (stage === 'framework' || stage === 'walls' || stage === 'roof') {
+      for (const sz of [-0.95, 0.95]) {
+        const beamX = new THREE.Mesh(new THREE.BoxGeometry(2.75, 0.11, 0.11), timberLightMat);
+        beamX.position.set(0, 1.74, sz);
+        group.add(beamX);
+      }
+      for (const sx of [-1.3, 1.3]) {
+        const beamZ = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 2.02), timberLightMat);
+        beamZ.position.set(sx, 1.74, 0);
+        group.add(beamZ);
+      }
+    }
+
+    // Stage 3 (Walls): Half-built walls leaving a doorway gap
+    if (stage === 'walls' || stage === 'roof') {
+      const wallH = stage === 'roof' ? 1.48 : 0.96;
+      const backWall = new THREE.Mesh(new THREE.BoxGeometry(2.54, wallH, 0.14), timberLightMat);
+      backWall.position.set(0, 0.16 + wallH * 0.5, -0.92);
+      group.add(backWall);
+      for (const sx of [-1.24, 1.24]) {
+        const sideWall = new THREE.Mesh(new THREE.BoxGeometry(0.14, wallH, 1.82), timberLightMat);
+        sideWall.position.set(sx, 0.16 + wallH * 0.5, 0);
+        group.add(sideWall);
+      }
+      for (const sx of [-0.85, 0.85]) {
+        const frontHalf = new THREE.Mesh(new THREE.BoxGeometry(0.76, wallH * 0.82, 0.14), timberLightMat);
+        frontHalf.position.set(sx, 0.16 + wallH * 0.41, 0.92);
+        group.add(frontHalf);
+      }
+    }
+
+    // Stage 4 (Roof): Exposed roof rafters & ridge beam
+    if (stage === 'roof') {
+      const ridge = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.7, 5), woodMat);
+      ridge.rotation.z = Math.PI / 2;
+      ridge.position.set(0, 2.45, 0);
+      group.add(ridge);
+      for (const rx of [-1.05, -0.35, 0.35, 1.05]) {
+        for (const side of [-1, 1]) {
+          const rafter = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 1.45), timberLightMat);
+          rafter.position.set(rx, 2.1, side * 0.52);
+          rafter.rotation.x = side * 0.58;
+          group.add(rafter);
+        }
+      }
+    }
+
+    // Progress / paused-for-materials bar
+    if (isConstructing || b.pausedForMaterials || constructionRatio > 0) {
+      const barBg = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.2, 0.12), getFlatMaterial(0x14161d, { roughness: 0.6 }));
+      barBg.position.set(0, 2.95, 0);
+      group.add(barBg);
+      const pct = Math.max(0.08, Math.min(1, constructionRatio || (stage === 'framework' ? 0.25 : stage === 'walls' ? 0.5 : stage === 'roof' ? 0.75 : 0.12)));
+      const barColor = b.pausedForMaterials ? 0xef4444 : 0xfbbf24;
+      const barEmissive = b.pausedForMaterials ? 0xdc2626 : 0xf59e0b;
+      const barFill = new THREE.Mesh(
+        new THREE.BoxGeometry(2.1 * pct, 0.13, 0.15),
+        getFlatMaterial(barColor, { emissive: barEmissive, emissiveIntensity: 1.25, roughness: 0.28 }),
+      );
+      barFill.position.set(-1.05 + 1.05 * pct, 2.95, 0);
+      group.add(barFill);
+    }
+
     setShadows(group, true, true);
     return group;
   }
@@ -819,6 +905,7 @@ export function createLowPolyBuilding(
     // Culture pennant banner
     const flag = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.44, 0.05), bannerMat);
     flag.position.set(1.38 * wScale, 1.35 + stiltBoost, 1.08);
+    flag.userData.isBanner = true;
     group.add(flag);
   } else if (b.type === 'woodshop') {
     const base = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.22, 2.15), timberLightMat);
@@ -952,6 +1039,7 @@ export function createLowPolyBuilding(
     }
     const banner = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.6, 0.06), bannerMat);
     banner.position.set(1.42, 1.45 + stiltBoost, 1.08);
+    banner.userData.isBanner = true;
     group.add(banner);
   } else if (b.type === 'smeltery') {
     const base = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.28, 2.2), stoneMat);
@@ -1011,6 +1099,7 @@ export function createLowPolyBuilding(
     group.add(flagPost);
     const pennant = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.32, 0.05), bannerMat);
     pennant.position.set(-0.37, 1.38, 0.62);
+    pennant.userData.isBanner = true;
     group.add(pennant);
     const bulb = new THREE.Mesh(new THREE.OctahedronGeometry(0.15, 0), winMat);
     bulb.position.set(2.15, 0.76, 0.62);
@@ -1031,6 +1120,7 @@ export function createLowPolyBuilding(
     group.add(roof);
     const flag = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.34, 0.05), bannerMat);
     flag.position.set(0.32, 4.18 + lv * 0.22, 0);
+    flag.userData.isBanner = true;
     group.add(flag);
   } else if (b.type === 'glider_pad') {
     const stoneBase = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.9, 2.3), stoneMat);
@@ -1057,6 +1147,7 @@ export function createLowPolyBuilding(
     const sock = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.85, 6), bannerMat);
     sock.rotation.z = -Math.PI / 2;
     sock.position.set(-0.72, 2.24, -0.82);
+    sock.userData.isWindsock = true;
     group.add(sock);
     // Parked folded glider on ramp
     const wingMat = getFlatMaterial(culture.sailColor, { roughness: 0.68 });
@@ -1156,6 +1247,28 @@ export function createBoatEntityGroup(boat: BoatEntity): THREE.Group {
     oar.position.set(0, 0.3, 0.24);
     oar.rotation.y = 0.25;
     g.add(oar);
+  } else if (boat.kind === 'migrant_skiff') {
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.32, 0.8), woodDark);
+    hull.position.y = 0.15;
+    g.add(hull);
+    const bow = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.56, 4), woodDark);
+    bow.rotation.z = -Math.PI / 2;
+    bow.rotation.x = Math.PI / 4;
+    bow.position.set(1.06, 0.18, 0);
+    g.add(bow);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.065, 1.55, 5), woodLight);
+    mast.position.set(0.1, 0.92, 0);
+    g.add(mast);
+    const sail = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.9, 0.92), sailMat);
+    sail.position.set(0.16, 1.05, 0);
+    sail.rotation.y = 0.22;
+    g.add(sail);
+    const lantern = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13, 6, 6),
+      getFlatMaterial(0xfde047, { emissive: 0xf59e0b, emissiveIntensity: 1.5, roughness: 0.25 }),
+    );
+    lantern.position.set(0.95, 0.48, 0);
+    g.add(lantern);
   } else if (boat.kind === 'cargo_merchant') {
     const hull = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.42, 1.05), woodDark);
     hull.position.y = 0.2;
@@ -1318,95 +1431,223 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
   const woolMat = getFlatMaterial(0xf0eadc, { roughness: 0.88 });
 
   const trouserMat = getFlatMaterial(v.gearTier === 0 ? 0x6b563e : 0x4f4438, { roughness: 0.88 });
-  const bootL = new THREE.Group();
-  bootL.position.set(-0.11, 0.28, 0);
-  const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.052, 0.18, 5), trouserMat);
-  legL.position.set(0, -0.09, 0);
-  bootL.add(legL);
-  const bootLMesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.22), bootMat);
-  bootLMesh.position.set(0, -0.22, 0.03);
-  bootL.add(bootLMesh);
-  g.add(bootL);
-  g.userData.bootL = bootL;
+  
+  // R15 Lower Body / Legs Rig Hierarchy with Smooth Human Mannequin Proportions
+  const hipL = new THREE.Group();
+  hipL.position.set(-0.11, 0.44, 0);
+  const thighL = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.048, 0.22, 10), trouserMat);
+  thighL.position.set(0, -0.11, 0);
+  thighL.scale.set(1.0, 1.0, 1.06);
+  hipL.add(thighL);
 
-  const bootR = new THREE.Group();
-  bootR.position.set(0.11, 0.28, 0);
-  const legR = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.052, 0.18, 5), trouserMat);
-  legR.position.set(0, -0.09, 0);
-  bootR.add(legR);
-  const bootRMesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.22), bootMat);
-  bootRMesh.position.set(0, -0.22, 0.03);
-  bootR.add(bootRMesh);
-  g.add(bootR);
-  g.userData.bootR = bootR;
+  const calfL = new THREE.Group();
+  calfL.position.set(0, -0.22, 0);
+  const kneeL = new THREE.Mesh(new THREE.SphereGeometry(0.046, 8, 8), trouserMat);
+  calfL.add(kneeL);
+  const calfLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.034, 0.18, 10), trouserMat);
+  calfLMesh.position.set(0, -0.09, 0);
+  calfLMesh.scale.set(0.96, 1.0, 1.06);
+  calfL.add(calfLMesh);
+  
+  // Smooth contoured mannequin foot (heel, ankle & forward forefoot)
+  const footLGroup = new THREE.Group();
+  footLGroup.position.set(0, -0.18, 0);
+  const ankleL = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 8), bootMat);
+  footLGroup.add(ankleL);
+  const heelL = new THREE.Mesh(new THREE.SphereGeometry(0.036, 8, 8), bootMat);
+  heelL.position.set(0, -0.02, -0.02);
+  footLGroup.add(heelL);
+  const toeL = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.046, 0.16), bootMat);
+  toeL.position.set(0, -0.024, 0.05);
+  footLGroup.add(toeL);
+  calfL.add(footLGroup);
+  hipL.add(calfL);
+  g.add(hipL);
+  g.userData.hipL = hipL;
+  g.userData.calfL = calfL;
+
+  const hipR = new THREE.Group();
+  hipR.position.set(0.11, 0.44, 0);
+  const thighR = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.048, 0.22, 10), trouserMat);
+  thighR.position.set(0, -0.11, 0);
+  thighR.scale.set(1.0, 1.0, 1.06);
+  hipR.add(thighR);
+
+  const calfR = new THREE.Group();
+  calfR.position.set(0, -0.22, 0);
+  const kneeR = new THREE.Mesh(new THREE.SphereGeometry(0.046, 8, 8), trouserMat);
+  calfR.add(kneeR);
+  const calfRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.034, 0.18, 10), trouserMat);
+  calfRMesh.position.set(0, -0.09, 0);
+  calfRMesh.scale.set(0.96, 1.0, 1.06);
+  calfR.add(calfRMesh);
+
+  const footRGroup = new THREE.Group();
+  footRGroup.position.set(0, -0.18, 0);
+  const ankleR = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 8), bootMat);
+  footRGroup.add(ankleR);
+  const heelR = new THREE.Mesh(new THREE.SphereGeometry(0.036, 8, 8), bootMat);
+  heelR.position.set(0, -0.02, -0.02);
+  footRGroup.add(heelR);
+  const toeR = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.046, 0.16), bootMat);
+  toeR.position.set(0, -0.024, 0.05);
+  footRGroup.add(toeR);
+  calfR.add(footRGroup);
+  hipR.add(calfR);
+  g.add(hipR);
+  g.userData.hipR = hipR;
+  g.userData.calfR = calfR;
 
   const bodyWrap = new THREE.Group();
-  const tunic = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.3, 0.58, 7), cloakMat);
-  tunic.position.y = 0.51;
-  bodyWrap.add(tunic);
+  const spine = new THREE.Group();
+  spine.position.set(0, 0.44, 0);
+  
+  // Smooth contoured mannequin torso (flowing chest, waist & pelvis)
+  const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.24, 10), cloakMat);
+  chest.scale.set(1.22, 1.0, 0.76);
+  chest.position.set(0, 0.36, 0);
+  spine.add(chest);
+
+  // Rounded shoulder deltoid caps
+  for (const sx of [-0.23, 0.23]) {
+    const deltoid = new THREE.Mesh(new THREE.SphereGeometry(0.062, 8, 8), cloakMat);
+    deltoid.position.set(sx, 0.45, 0);
+    spine.add(deltoid);
+  }
+
+  // Slim contoured waist
+  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.145, 0.18, 10), cloakMat);
+  waist.scale.set(1.1, 1.0, 0.72);
+  waist.position.set(0, 0.17, 0);
+  spine.add(waist);
+
+  // Pelvis & hips
+  const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.13, 0.14, 10), cloakMat);
+  pelvis.scale.set(1.15, 1.0, 0.75);
+  pelvis.position.set(0, 0.03, 0);
+  spine.add(pelvis);
+
+  // Smooth cylindrical neck column
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.065, 0.16, 10), skinMat);
+  neck.position.set(0, 0.52, 0);
+  spine.add(neck);
 
   // Gear tier 2 wool shoulder mantle or tier 3 metal pauldrons
   if (v.gearTier >= 2) {
     const mantle = new THREE.Mesh(
-      new THREE.TorusGeometry(0.22, 0.065, 4, 7),
+      new THREE.TorusGeometry(0.24, 0.065, 6, 10),
       v.gearTier === 3 ? armorMat : woolMat,
     );
     mantle.rotation.x = Math.PI / 2;
-    mantle.position.y = 0.77;
-    bodyWrap.add(mantle);
+    mantle.position.y = 0.47;
+    spine.add(mantle);
   }
   if (v.gearTier >= 1) {
-    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.26, 0.07, 7), getFlatMaterial(culture.bannerColor));
-    belt.position.y = 0.44;
-    bodyWrap.add(belt);
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.05, 10), getFlatMaterial(culture.bannerColor));
+    belt.scale.set(1.12, 1.0, 0.74);
+    belt.position.y = 0.09;
+    spine.add(belt);
   }
 
-  const armL = new THREE.Group();
-  armL.position.set(-0.23, 0.74, 0);
-  const armLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.052, 0.38, 5), v.gearTier === 0 ? skinMat : cloakMat);
-  armLMesh.position.set(0, -0.17, 0);
-  armLMesh.rotation.z = -0.14;
-  armL.add(armLMesh);
-  const handL = new THREE.Mesh(new THREE.IcosahedronGeometry(0.052, 0), skinMat);
-  handL.position.set(-0.04, -0.36, 0);
-  armL.add(handL);
-  bodyWrap.add(armL);
-  g.userData.armL = armL;
+  // R15 Upper Arms & Forearms Rig Hierarchy with Mannequin Proportions
+  const shoulderL = new THREE.Group();
+  shoulderL.position.set(-0.25, 0.46, 0);
+  const upperArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.038, 0.22, 8), v.gearTier === 0 ? skinMat : cloakMat);
+  upperArmL.position.set(0, -0.11, 0);
+  shoulderL.add(upperArmL);
 
-  const armR = new THREE.Group();
-  armR.position.set(0.23, 0.74, 0);
-  const armRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.052, 0.38, 5), v.gearTier === 0 ? skinMat : cloakMat);
-  armRMesh.position.set(0, -0.17, 0);
-  armRMesh.rotation.z = 0.14;
-  armR.add(armRMesh);
-  const handR = new THREE.Mesh(new THREE.IcosahedronGeometry(0.052, 0), skinMat);
-  handR.position.set(0.04, -0.36, 0);
-  armR.add(handR);
-  bodyWrap.add(armR);
-  g.userData.armR = armR;
+  const forearmL = new THREE.Group();
+  forearmL.position.set(0, -0.22, 0);
+  const elbowL = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), v.gearTier === 0 ? skinMat : cloakMat);
+  forearmL.add(elbowL);
+  const forearmLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.03, 0.2, 8), v.gearTier === 0 ? skinMat : cloakMat);
+  forearmLMesh.position.set(0, -0.1, 0);
+  forearmL.add(forearmLMesh);
+  
+  // Stylized mannequin hand (palm, fingers & thumb angled outward)
+  const handLGroup = new THREE.Group();
+  handLGroup.position.set(0, -0.2, 0);
+  const palmL = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.065, 0.02), skinMat);
+  palmL.position.set(0, -0.03, 0);
+  handLGroup.add(palmL);
+  const fingersL = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.04, 0.016), skinMat);
+  fingersL.position.set(0, -0.075, 0);
+  handLGroup.add(fingersL);
+  const thumbL = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.009, 0.038, 5), skinMat);
+  thumbL.position.set(0.028, -0.028, 0.008);
+  thumbL.rotation.z = 0.55;
+  handLGroup.add(thumbL);
+  forearmL.add(handLGroup);
+  shoulderL.add(forearmL);
+  spine.add(shoulderL);
+  g.userData.shoulderL = shoulderL;
+  g.userData.forearmL = forearmL;
 
+  const shoulderR = new THREE.Group();
+  shoulderR.position.set(0.25, 0.46, 0);
+  const upperArmR = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.038, 0.22, 8), v.gearTier === 0 ? skinMat : cloakMat);
+  upperArmR.position.set(0, -0.11, 0);
+  shoulderR.add(upperArmR);
+
+  const forearmR = new THREE.Group();
+  forearmR.position.set(0, -0.22, 0);
+  const elbowR = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), v.gearTier === 0 ? skinMat : cloakMat);
+  forearmR.add(elbowR);
+  const forearmRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.03, 0.2, 8), v.gearTier === 0 ? skinMat : cloakMat);
+  forearmRMesh.position.set(0, -0.1, 0);
+  forearmR.add(forearmRMesh);
+
+  const handRGroup = new THREE.Group();
+  handRGroup.position.set(0, -0.2, 0);
+  const palmR = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.065, 0.02), skinMat);
+  palmR.position.set(0, -0.03, 0);
+  handRGroup.add(palmR);
+  const fingersR = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.04, 0.016), skinMat);
+  fingersR.position.set(0, -0.075, 0);
+  handRGroup.add(fingersR);
+  const thumbR = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.009, 0.038, 5), skinMat);
+  thumbR.position.set(-0.028, -0.028, 0.008);
+  thumbR.rotation.z = -0.55;
+  handRGroup.add(thumbR);
+  forearmR.add(handRGroup);
+  shoulderR.add(forearmR);
+  spine.add(shoulderR);
+  g.userData.shoulderR = shoulderR;
+  g.userData.forearmR = forearmR;
+
+  // Smooth egg-shaped mannequin head (proportioned as in the reference model)
   const headGroup = new THREE.Group();
-  headGroup.position.y = 0.96;
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), skinMat);
+  headGroup.position.set(0, 0.6, 0);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 10), skinMat);
+  head.scale.set(0.88, 1.18, 0.96);
+  head.position.set(0, 0.15, 0.01);
   headGroup.add(head);
-  for (const ex of [-0.08, 0.08]) {
-    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.05, 0.04), eyeMat);
-    eye.position.set(ex, 0, 0.21);
+
+  for (const ex of [-0.06, 0.06]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 6), eyeMat);
+    eye.position.set(ex, 0.15, 0.16);
     headGroup.add(eye);
   }
-  const hair = new THREE.Mesh(new THREE.IcosahedronGeometry(0.25, 1), hairMat);
-  hair.position.set(0, 0.07, -0.03);
-  hair.scale.set(1.06, 0.82, 1.06);
+
+  // Smooth contoured hair coiffure
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), hairMat);
+  hair.scale.set(0.92, 0.96, 1.02);
+  hair.position.set(0, 0.18, -0.02);
   headGroup.add(hair);
 
   if (v.gearTier === 3) {
-    const helm = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.24, 6), armorMat);
-    helm.position.y = 0.22;
+    const helm = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.22, 8), armorMat);
+    helm.position.y = 0.32;
     headGroup.add(helm);
   }
 
-  bodyWrap.add(headGroup);
+  spine.add(headGroup);
+  bodyWrap.add(spine);
   g.userData.headGroup = headGroup;
+  g.userData.bodyWrap = bodyWrap;
+
+  const armL = shoulderL;
+  const armR = shoulderR;
 
   // Chief sash & golden crown circlet
   const chiefBadge = new THREE.Group();
@@ -1414,7 +1655,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
     new THREE.ConeGeometry(0.14, 0.2, 5),
     getFlatMaterial(0xfde047, { roughness: 0.22, metalness: 0.82, emissive: 0xd97706, emissiveIntensity: 0.35 }),
   );
-  crown.position.y = 1.28;
+  crown.position.y = 1.38;
   chiefBadge.add(crown);
   chiefBadge.visible = v.isChief;
   bodyWrap.add(chiefBadge);
@@ -1425,7 +1666,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
     const weaponGroup = new THREE.Group();
     if (v.weaponType === 'bow') {
       // Bow held in left hand pointing forward
-      weaponGroup.position.set(-0.04, -0.35, 0.08);
+      weaponGroup.position.set(-0.04, -0.38, 0.06);
       weaponGroup.rotation.x = Math.PI * 0.45;
       const bowArc = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.028, 4, 8, Math.PI), bootMat);
       bowArc.rotation.z = -Math.PI / 2;
@@ -1436,7 +1677,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
       weaponGroup.add(string);
       armL.add(weaponGroup);
     } else if (v.weaponType === 'flint_spear') {
-      weaponGroup.position.set(0.05, -0.35, 0.06);
+      weaponGroup.position.set(0.04, -0.38, 0.06);
       weaponGroup.rotation.x = Math.PI * 0.46;
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 1.32, 5), bootMat);
       shaft.position.y = 0.28;
@@ -1446,7 +1687,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
       weaponGroup.add(tip);
       armR.add(weaponGroup);
     } else {
-      weaponGroup.position.set(0.05, -0.35, 0.06);
+      weaponGroup.position.set(0.04, -0.38, 0.06);
       weaponGroup.rotation.x = Math.PI * 0.46;
       const bladeColor = v.weaponType === 'bronze_blade' ? 0xd88c42 : 0xb3c2d1;
       const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.2, 5), bootMat);
@@ -1468,7 +1709,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
 
   // Hand-held Construction Hammer
   const hammerGroup = new THREE.Group();
-  hammerGroup.position.set(0.04, -0.36, 0.06);
+  hammerGroup.position.set(0.04, -0.38, 0.06);
   hammerGroup.rotation.x = Math.PI * 0.48;
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.44, 5), bootMat);
   handle.position.y = 0.16;
@@ -1482,7 +1723,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
 
   // Hand-held Woodcutter Axe
   const axeGroup = new THREE.Group();
-  axeGroup.position.set(0.04, -0.36, 0.06);
+  axeGroup.position.set(0.04, -0.38, 0.06);
   axeGroup.rotation.x = Math.PI * 0.48;
   const axeHaft = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.028, 0.56, 5), bootMat);
   axeHaft.position.y = 0.22;
@@ -1496,7 +1737,7 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
 
   // Hand-held Stone Pickaxe
   const pickaxeGroup = new THREE.Group();
-  pickaxeGroup.position.set(0.04, -0.36, 0.06);
+  pickaxeGroup.position.set(0.04, -0.38, 0.06);
   pickaxeGroup.rotation.x = Math.PI * 0.48;
   const pickHaft = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.028, 0.56, 5), bootMat);
   pickHaft.position.y = 0.22;
@@ -1510,8 +1751,8 @@ export function createLowPolyVillager(v: VillagerEntity): THREE.Group {
   g.userData.pickaxeGroup = pickaxeGroup;
 
   // Rain hat
-  const rainHat = new THREE.Mesh(new THREE.ConeGeometry(0.44, 0.24, 6), getFlatMaterial(0xd99b52));
-  rainHat.position.y = 1.24;
+  const rainHat = new THREE.Mesh(new THREE.ConeGeometry(0.44, 0.24, 8), getFlatMaterial(0xd99b52));
+  rainHat.position.y = 1.36;
   rainHat.visible = false;
   bodyWrap.add(rainHat);
   g.userData.rainHat = rainHat;
@@ -1575,13 +1816,27 @@ export function createLivestockGroup(l: LivestockEntity): THREE.Group {
     wool.scale.set(1.25, 0.92, 0.95);
     wool.position.y = 0.32;
     bodyWrap.add(wool);
+
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0.28, 0.38, 0);
     const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14, 0), faceMat);
-    head.position.set(0.28, 0.38, 0);
-    bodyWrap.add(head);
-    for (const [lx, lz] of [[-0.14, -0.1], [-0.14, 0.1], [0.14, -0.1], [0.14, 0.1]]) {
+    headGroup.add(head);
+    bodyWrap.add(headGroup);
+    g.userData.headGroup = headGroup;
+
+    for (const [key, lx, lz] of [
+      ['legFL', 0.14, -0.1],
+      ['legFR', 0.14, 0.1],
+      ['legBL', -0.14, -0.1],
+      ['legBR', -0.14, 0.1],
+    ] as [string, number, number][]) {
+      const legPivot = new THREE.Group();
+      legPivot.position.set(lx, 0.22, lz);
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.032, 0.22, 4), faceMat);
-      leg.position.set(lx, 0.11, lz);
-      bodyWrap.add(leg);
+      leg.position.y = -0.11;
+      legPivot.add(leg);
+      bodyWrap.add(legPivot);
+      g.userData[key] = legPivot;
     }
   } else if (l.kind === 'pig') {
     const pigMat = getFlatMaterial(0xe3a89c, { roughness: 0.78 });
@@ -1590,14 +1845,29 @@ export function createLivestockGroup(l: LivestockEntity): THREE.Group {
     body.scale.set(1.32, 0.88, 0.9);
     body.position.y = 0.26;
     bodyWrap.add(body);
+
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0.26, 0.26, 0);
     const snout = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 0.12, 6), snoutMat);
     snout.rotation.z = -Math.PI / 2;
-    snout.position.set(0.32, 0.25, 0);
-    bodyWrap.add(snout);
-    for (const [lx, lz] of [[-0.14, -0.1], [-0.14, 0.1], [0.14, -0.1], [0.14, 0.1]]) {
+    snout.position.set(0.08, 0, 0);
+    headGroup.add(snout);
+    bodyWrap.add(headGroup);
+    g.userData.headGroup = headGroup;
+
+    for (const [key, lx, lz] of [
+      ['legFL', 0.14, -0.1],
+      ['legFR', 0.14, 0.1],
+      ['legBL', -0.14, -0.1],
+      ['legBR', -0.14, 0.1],
+    ] as [string, number, number][]) {
+      const legPivot = new THREE.Group();
+      legPivot.position.set(lx, 0.16, lz);
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.03, 0.16, 4), pigMat);
-      leg.position.set(lx, 0.08, lz);
-      bodyWrap.add(leg);
+      leg.position.y = -0.08;
+      legPivot.add(leg);
+      bodyWrap.add(legPivot);
+      g.userData[key] = legPivot;
     }
   } else {
     // Fowl
@@ -1607,13 +1877,32 @@ export function createLivestockGroup(l: LivestockEntity): THREE.Group {
     body.scale.set(1.25, 0.92, 0.88);
     body.position.y = 0.18;
     bodyWrap.add(body);
+
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0.14, 0.28, 0);
     const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 0), featherMat);
-    head.position.set(0.14, 0.28, 0);
-    bodyWrap.add(head);
+    headGroup.add(head);
     const beak = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 4), beakMat);
     beak.rotation.z = -Math.PI / 2;
-    beak.position.set(0.24, 0.27, 0);
-    bodyWrap.add(beak);
+    beak.position.set(0.1, -0.01, 0);
+    headGroup.add(beak);
+    bodyWrap.add(headGroup);
+    g.userData.headGroup = headGroup;
+
+    for (const [key, lx, lz] of [
+      ['legFL', 0.04, -0.05],
+      ['legFR', 0.04, 0.05],
+      ['legBL', -0.04, -0.05],
+      ['legBR', -0.04, 0.05],
+    ] as [string, number, number][]) {
+      const legPivot = new THREE.Group();
+      legPivot.position.set(lx, 0.12, lz);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.018, 0.12, 4), featherMat);
+      leg.position.y = -0.06;
+      legPivot.add(leg);
+      bodyWrap.add(legPivot);
+      g.userData[key] = legPivot;
+    }
   }
 
   g.add(bodyWrap);
